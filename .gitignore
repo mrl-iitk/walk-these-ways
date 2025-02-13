@@ -68,3 +68,4 @@ docker/rsc
 *.jit
 tmp
 *.tar
+isaacgym/
