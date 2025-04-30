@@ -1,5 +1,9 @@
-def train_m2(headless=True):
+import hydra
 
+
+@hydra.main(config_name='config', config_path='/home/nishant/svan/walk-these-ways/go1_gym_learn/tdmpc')
+def train_m2(cfg: dict):
+    headless=True
     import isaacgym
     assert isaacgym
     import torch
@@ -260,4 +264,4 @@ if __name__ == '__main__':
                 """, filename=".charts.yml", dedent=True)
 
     # to see the environment rendering, set headless=False
-    train_m2(headless=True)
+    train_m2()

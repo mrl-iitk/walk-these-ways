@@ -3,7 +3,7 @@ from copy import deepcopy
 import torch
 import torch.nn as nn
 
-from common import layers, math, init
+from . import layers, math, init
 from tensordict import TensorDict
 from tensordict.nn import TensorDictParams
 
@@ -15,6 +15,7 @@ class WorldModel(nn.Module):
 
 	def __init__(self, cfg):
 		super().__init__()
+		self.cfg = cfg
 		if cfg.multitask:
 			self._task_emb = nn.Embedding(len(cfg.tasks), cfg.task_dim, max_norm=1)
 			self.register_buffer("_action_masks", torch.zeros(len(cfg.tasks), cfg.action_dim))
@@ -24,25 +25,29 @@ class WorldModel(nn.Module):
 		self._dynamics = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], cfg.latent_dim, act=layers.SimNorm(cfg))
 		self._reward = layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1))
 		self._pi = layers.mlp(cfg.latent_dim + cfg.task_dim, 2*[cfg.mlp_dim], 2*cfg.action_dim)
+		
 		self._Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)])
 		self.apply(init.weight_init)
-		init.zero_([self._reward[-1].weight, self._Qs.params["2", "weight"]])
+		init.zero_([self._reward[-1].weight, self._Qs.params["2.weight"]])
 
 		self.register_buffer("log_std_min", torch.tensor(cfg.log_std_min))
 		self.register_buffer("log_std_dif", torch.tensor(cfg.log_std_max) - self.log_std_min)
 		self.init()
 
 	def init(self):
-		# Create params
-		self._detach_Qs_params = TensorDictParams(self._Qs.params.data, no_convert=True)
-		self._target_Qs_params = TensorDictParams(self._Qs.params.data.clone(), no_convert=True)
+		# Create params  
+		# print(self._Qs.params)
+		# shapes = [tensor.shape for tensor in self._Qs.params]; print(f"All shapes: {shapes}")
+		self._detach_Qs_params = torch.utils._pytree.tree_map(lambda x: x.detach(), self._Qs.params)
 
-		# Create modules
-		with self._detach_Qs_params.data.to("meta").to_module(self._Qs.module):
-			self._detach_Qs = deepcopy(self._Qs)
-			self._target_Qs = deepcopy(self._Qs)
+		# Clone parameters (copy values)
+		self._target_Qs_params = torch.utils._pytree.tree_map(lambda x: x.detach().clone(), self._Qs.params)
 
-		# Assign params to modules
+		# Deepcopy the modules (architecture, buffers, etc.)
+		self._detach_Qs = deepcopy(self._Qs)
+		self._target_Qs = deepcopy(self._Qs)
+
+		# Reassign parameters (functional-style, so you store them separately)
 		self._detach_Qs.params = self._detach_Qs_params
 		self._target_Qs.params = self._target_Qs_params
 
@@ -101,6 +106,7 @@ class WorldModel(nn.Module):
 			obs = self.task_emb(obs, task)
 		if self.cfg.obs == 'rgb' and obs.ndim == 5:
 			return torch.stack([self._encoder[self.cfg.obs](o) for o in obs])
+		print("Config obs", self.cfg.obs)
 		return self._encoder[self.cfg.obs](obs)
 
 	def next(self, z, a, task):
@@ -131,37 +137,23 @@ class WorldModel(nn.Module):
 			z = self.task_emb(z, task)
 
 		# Gaussian policy prior
-		mean, log_std = self._pi(z).chunk(2, dim=-1)
+		mu, log_std = self._pi(z).chunk(2, dim=-1)
 		log_std = math.log_std(log_std, self.log_std_min, self.log_std_dif)
-		eps = torch.randn_like(mean)
+		eps = torch.randn_like(mu)
 
 		if self.cfg.multitask: # Mask out unused action dimensions
-			mean = mean * self._action_masks[task]
+			mu = mu * self._action_masks[task]
 			log_std = log_std * self._action_masks[task]
 			eps = eps * self._action_masks[task]
 			action_dims = self._action_masks.sum(-1)[task].unsqueeze(-1)
 		else: # No masking
 			action_dims = None
 
-		log_prob = math.gaussian_logprob(eps, log_std)
+		log_pi = math.gaussian_logprob(eps, log_std, size=action_dims)
+		pi = mu + eps * log_std.exp()
+		mu, pi, log_pi = math.squash(mu, pi, log_pi)
 
-		# Scale log probability by action dimensions
-		size = eps.shape[-1] if action_dims is None else action_dims
-		scaled_log_prob = log_prob * size
-
-		# Reparameterization trick
-		action = mean + eps * log_std.exp()
-		mean, action, log_prob = math.squash(mean, action, log_prob)
-
-		entropy_scale = scaled_log_prob / (log_prob + 1e-8)
-		info = TensorDict({
-			"mean": mean,
-			"log_std": log_std,
-			"action_prob": 1.,
-			"entropy": -log_prob,
-			"scaled_entropy": -log_prob * entropy_scale,
-		})
-		return action, info
+		return mu, pi, log_pi, log_std
 
 	def Q(self, z, a, task, return_type='min', target=False, detach=False):
 		"""

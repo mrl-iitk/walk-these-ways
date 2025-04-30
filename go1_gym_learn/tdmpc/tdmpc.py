@@ -7,9 +7,9 @@ import torch.nn.functional as F
 import numpy as np
 from params_proto import PrefixProto
 
-from common import math
-from common.scale import RunningScale
-from tdmpc.common.world_model import WorldModel
+from .common import math
+from .common.scale import RunningScale
+from .common.world_model import WorldModel
 from tensordict import TensorDict
 
 from go1_gym_learn.tdmpc import WorldModel
@@ -40,7 +40,7 @@ class TDMPC(torch.nn.Module):
     # [Changed Function]
     def __init__(self, world_model, cfg, device='cpu'):
         super().__init__()
-
+        self.cfg = cfg
         self.device = device
         self.model = world_model
         self.optim = torch.optim.Adam([
@@ -58,11 +58,12 @@ class TDMPC(torch.nn.Module):
         self.discount = torch.tensor(
 			[self._get_discount(ep_len) for ep_len in cfg.episode_lengths], device='cuda:0'
 		) if self.cfg.multitask else self._get_discount(cfg.episode_length)
-        self._prev_mean = torch.nn.Buffer(torch.zeros(self.cfg.num_envs, self.cfg.horizon, self.cfg.action_dim, device=self.device))
+        # self._prev_mean = torch.nn.Buffer(torch.zeros(self.cfg.num_envs, self.cfg.horizon, self.cfg.action_dim, device=self.device))
         if cfg.compile:
             print('Compiling update function with torch.compile...')        
         self._update = torch.compile(self._update, mode="reduce-overhead")
         self.transition = RolloutStorage.Transition()
+        self.register_buffer("_prev_mean", torch.zeros(self.cfg.num_envs, self.cfg.horizon, self.cfg.action_dim, device=self.device))
 
 
     def init_storage(self, num_envs, num_transitions_per_env, actor_obs_shape, privileged_obs_shape, obs_history_shape,
@@ -103,52 +104,60 @@ class TDMPC(torch.nn.Module):
         frac = episode_length/self.cfg.discount_denom
         return min(max((frac-1)/(frac), self.cfg.discount_min), self.cfg.discount_max)
 
+    def save(self, fp):
+        """
+        Save state dict of the agent to filepath.
 
-    # [Changed Function]
+        Args:
+            fp (str): Filepath to save state dict to.
+        """
+        torch.save({"model": self.model.state_dict()}, fp)
+
+    def load(self, fp):
+        """
+        Load a saved state dict from filepath (or dictionary) into current agent.
+
+        Args:
+            fp (str or dict): Filepath or state dict to load.
+        """
+        state_dict = fp if isinstance(fp, dict) else torch.load(fp)
+        self.model.load_state_dict(state_dict["model"])
+
     @torch.no_grad()
-    def act(self, obs, privileged_obs, obs_history, t0=False, eval_mode=False, task=None):
-        # Compute the actions and values
+    def act(self, obs, t0=False, eval_mode=False, task=None):
+        """
+        Select an action by planning in the latent space of the world model.
 
-            obs = obs.to(self.device, non_blocking=True)
+        Args:
+            obs (torch.Tensor): Observation from the environment.
+            t0 (bool): Whether this is the first observation in the episode.
+            eval_mode (bool): Whether to use the mean of the action distribution.
+            task (int): Task index (only used for multi-task experiments).
 
-            if self.cfg.mpc:
-                action = self.plan(obs, t0=t0, eval_mode=eval_mode, task=task).cpu()
-            else:
-                # Encode observation into latent space
-                z = self.model.encode(obs, task)
-                action, info = self.model.pi(z, task)  # Get action from policy
-                if eval_mode:
-                    action = info["mean"]
+        Returns:
+            torch.Tensor: Action to take in the environment.
+        """
+        obs = obs.to(self.device, non_blocking=True)
+        if task is not None:
+            task = torch.tensor([task], device=self.device)
+        if self.cfg.mpc:
+            a = self.plan(obs, t0=t0, eval_mode=eval_mode, task=task)
+        else:
+            z = self.model.encode(obs, task)
+            a = self.model.pi(z, task)[int(not eval_mode)][0]
+        return a.cpu()
 
-            # [Store transition information like PPO]
-            self.transition.actions = action[0].cpu().detach()  # Store action
-            self.transition.values = self.model.evaluate(obs, task).cpu().detach()  # Store value estimate
-            self.transition.actions_log_prob = self.model.get_actions_log_prob(action).cpu().detach()
-            self.transition.action_mean = info["mean"].cpu().detach()
-            self.transition.action_sigma = info["log_std"].exp().cpu().detach() if "log_std" in info else None
-
-            # Store observations
-            self.transition.observations = obs.cpu()
-            self.transition.critic_observations = obs.cpu()
-            self.transition.privileged_observations = None  # TDMPC may not use privileged obs
-            self.transition.observation_histories = None  # TDMPC may not track history like PPO
-
-            return action[0].cpu()
-
-    
     @torch.no_grad()
     def _estimate_value(self, z, actions, task):
         """Estimate value of a trajectory starting at latent state z and executing given actions."""
         G, discount = 0, 1
         for t in range(self.cfg.horizon):
-            reward = math.two_hot_inv(self.model.reward(z, actions[t], task), self.cfg)
-            z = self.model.next(z, actions[t], task)
+            reward = math.two_hot_inv(self.model.reward(z, actions[:, t], task), self.cfg)
+            z = self.model.next(z, actions[:, t], task)
             G = G + discount * reward
-            discount_update = self.discount
+            discount_update = self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
             discount = discount * discount_update
-        action, _ = self.model.pi(z, task)
-        return G + discount * self.model.Q(z, action, task, return_type='avg')
-
+        return G + discount * self.model.Q(z, self.model.pi(z, task)[1], task, return_type='avg')
 
     @torch.no_grad()
     def _plan(self, obs, t0=False, eval_mode=False, task=None):
@@ -169,9 +178,11 @@ class TDMPC(torch.nn.Module):
         if self.cfg.num_pi_trajs > 0:
             pi_actions = torch.empty(self.cfg.num_envs, self.cfg.horizon, self.cfg.num_pi_trajs, self.cfg.action_dim, device=self.device)
             _z = z.unsqueeze(1).repeat(1, self.cfg.num_pi_trajs, 1)
+
             for t in range(self.cfg.horizon-1):
                 pi_actions[:,t] = self.model.pi(_z, task)[1]
                 _z = self.model.next(_z, pi_actions[:,t], task)
+            
             pi_actions[:,-1] = self.model.pi(_z, task)[1]
 
         # Initialize state and parameters
@@ -179,26 +190,27 @@ class TDMPC(torch.nn.Module):
         mean = torch.zeros(self.cfg.num_envs, self.cfg.horizon, self.cfg.action_dim, device=self.device)
         std = self.cfg.max_std*torch.ones(self.cfg.num_envs, self.cfg.horizon, self.cfg.action_dim, device=self.device)
         if not t0:
-            mean[:-1] = self._prev_mean[1:]
-        actions = torch.empty(self.cfg.horizon, self.cfg.num_samples, self.cfg.action_dim, device=self.device)
+            mean[:, :-1] = self._prev_mean[:, 1:]
+        actions = torch.empty(self.cfg.num_envs, self.cfg.horizon, self.cfg.num_samples, self.cfg.action_dim, device=self.device)
         if self.cfg.num_pi_trajs > 0:
-            actions[:, :self.cfg.num_pi_trajs] = pi_actions
+            actions[:, :, :self.cfg.num_pi_trajs] = pi_actions
 
         # Iterate MPPI
         for _ in range(self.cfg.iterations):
 
             # Sample actions
-            r = torch.randn(self.cfg.horizon, self.cfg.num_samples-self.cfg.num_pi_trajs, self.cfg.action_dim, device=std.device)
-            actions_sample = mean.unsqueeze(1) + std.unsqueeze(1) * r
+            r = torch.randn(self.cfg.num_envs, self.cfg.horizon, self.cfg.num_samples-self.cfg.num_pi_trajs, self.cfg.action_dim, device=std.device)
+            actions_sample = mean.unsqueeze(2) + std.unsqueeze(2) * r
             actions_sample = actions_sample.clamp(-1, 1)
-            actions[:, self.cfg.num_pi_trajs:] = actions_sample
+            actions[:, :, self.cfg.num_pi_trajs:] = actions_sample
             if self.cfg.multitask:
                 actions = actions * self.model._action_masks[task]
 
             # Compute elite actions
             value = self._estimate_value(z, actions, task).nan_to_num(0)
-            elite_idxs = torch.topk(value.squeeze(1), self.cfg.num_elites, dim=0).indices
-            elite_value, elite_actions = value[elite_idxs], actions[:, elite_idxs]
+            elite_idxs = torch.topk(value.squeeze(2), self.cfg.num_elites, dim=1).indices
+            elite_value = torch.gather(value, 1, elite_idxs.unsqueeze(2))
+            elite_actions = torch.gather(actions, 2, elite_idxs.unsqueeze(1).unsqueeze(3).expand(-1, self.cfg.horizon, -1, self.cfg.action_dim))
 
             # Update parameters
             max_value = elite_value.max(1).values
@@ -219,25 +231,8 @@ class TDMPC(torch.nn.Module):
             action = action + std * torch.randn(self.cfg.action_dim, device=std.device)
         self._prev_mean.copy_(mean)
         return action.clamp(-1, 1)
-
-    def process_env_step(self, rewards, dones, infos, task='dog-run'):
-        self.transition.rewards = rewards.clone()
-        self.transition.dones = dones
-        self.transition.env_bins = infos["env_bins"]
-        # Bootstrapping on time outs
-        if 'time_outs' in infos:
-            self.transition.rewards += self.discount * torch.squeeze(
-                self.transition.values * infos['time_outs'].unsqueeze(1).to(self.device), 1)
-
-        # Record the transition
-        self.storage.add_transitions(self.transition)
-        self.transition.clear()
-        self.world_model.reset(dones)
-
-    # def compute_returns(self, last_critic_obs, last_critic_privileged_obs):
-    #     last_values = self.world_model.evaluate(last_critic_obs, last_critic_privileged_obs).detach()
-    #     self.storage.compute_returns(last_values, TDMPC_Args.gamma, TDMPC_Args.lam)
-
+        
+        
     def update_pi(self, zs, task):
         """
         Update policy using a sequence of latent states.
@@ -249,28 +244,20 @@ class TDMPC(torch.nn.Module):
         Returns:
             float: Loss of the policy update.
         """
-        action, info = self.model.pi(zs, task)
-        qs = self.model.Q(zs, action, task, return_type='avg', detach=True)
+        _, pis, log_pis, _ = self.model.pi(zs, task)
+        qs = self.model.Q(zs, pis, task, return_type='avg', detach=True)
         self.scale.update(qs[0])
         qs = self.scale(qs)
 
         # Loss is a weighted sum of Q-values
         rho = torch.pow(self.cfg.rho, torch.arange(len(qs), device=self.device))
-        pi_loss = (-(self.cfg.entropy_coef * info["scaled_entropy"] + qs).mean(dim=(1,2)) * rho).mean()
+        pi_loss = ((self.cfg.entropy_coef * log_pis - qs).mean(dim=(1,2)) * rho).mean()
         pi_loss.backward()
         pi_grad_norm = torch.nn.utils.clip_grad_norm_(self.model._pi.parameters(), self.cfg.grad_clip_norm)
         self.pi_optim.step()
         self.pi_optim.zero_grad(set_to_none=True)
 
-        info = TensorDict({
-            "pi_loss": pi_loss,
-            "pi_grad_norm": pi_grad_norm,
-            "pi_entropy": info["entropy"],
-            "pi_scaled_entropy": info["scaled_entropy"],
-            "pi_scale": self.scale.value,
-        })
-        return info
-
+        return pi_loss.detach(), pi_grad_norm
 
     @torch.no_grad()
     def _td_target(self, next_z, reward, task):
@@ -285,9 +272,9 @@ class TDMPC(torch.nn.Module):
         Returns:
             torch.Tensor: TD-target.
         """
-        action, _ = self.model.pi(next_z, task)
-        discount = self.discount
-        return reward + discount * self.model.Q(next_z, action, task, return_type='min', target=True)
+        pi = self.model.pi(next_z, task)[1]
+        discount = self.discount[task].unsqueeze(-1) if self.cfg.multitask else self.discount
+        return reward + discount * self.model.Q(next_z, pi, task, return_type='min', target=True)
 
     def _update(self, obs, action, reward, task=None):
         # Compute targets
@@ -310,9 +297,10 @@ class TDMPC(torch.nn.Module):
 
         # Predictions
         _zs = zs[:-1]
+        print("Here reached 1")
         qs = self.model.Q(_zs, action, task, return_type='all')
         reward_preds = self.model.reward(_zs, action, task)
-
+        print("Hre reached 2")
         # Compute losses
         reward_loss, value_loss = 0, 0
         for t, (rew_pred_unbind, rew_unbind, td_targets_unbind, qs_unbind) in enumerate(zip(reward_preds.unbind(0), reward.unbind(0), td_targets.unbind(0), qs.unbind(1))):
@@ -336,42 +324,52 @@ class TDMPC(torch.nn.Module):
         self.optim.zero_grad(set_to_none=True)
 
         # Update policy
-        pi_info = self.update_pi(zs.detach(), task)
+        pi_loss, pi_grad_norm = self.update_pi(zs.detach(), task)
 
         # Update target Q-functions
         self.model.soft_update_target_Q()
 
         # Return training statistics
         self.model.eval()
-        info = TensorDict({
+        return TensorDict({
             "consistency_loss": consistency_loss,
             "reward_loss": reward_loss,
             "value_loss": value_loss,
+            "pi_loss": pi_loss,
             "total_loss": total_loss,
             "grad_norm": grad_norm,
-        })
-        info.update(pi_info)
-        return info.detach().mean()
+            "pi_grad_norm": pi_grad_norm,
+            "pi_scale": self.scale.value,
+        }).detach().mean()
 
-
-    # [Needs changes to Replay Buffer]
-    def update(self):
+    def update(self, buffer):
         """
         Main update function. Corresponds to one iteration of model learning.
 
-        Returns:		
+        Args:
+            buffer (common.buffer.Buffer): Replay buffer.
+
+        Returns:
             dict: Dictionary of training statistics.
         """
-
-        # Prepare batch for training
-        obs, action, reward, task = self.storage.sample()
-
+        obs, action, reward, task = buffer.sample()
         kwargs = {}
         if task is not None:
             kwargs["task"] = task
-
-        # Mark the step for CUDA graph optimization
         torch.compiler.cudagraph_mark_step_begin()
-
-        # Call the internal update function
         return self._update(obs, action, reward, **kwargs)
+    
+
+    def process_env_step(self, rewards, dones, infos, task='dog-run'):
+        self.transition.rewards = rewards.clone()
+        self.transition.dones = dones
+        self.transition.env_bins = infos["env_bins"]
+        # Bootstrapping on time outs
+        if 'time_outs' in infos:
+            self.transition.rewards += self.discount * torch.squeeze(
+                self.transition.values * infos['time_outs'].unsqueeze(1).to(self.device), 1)
+
+        # Record the transition
+        self.storage.add_transitions(self.transition)
+        self.transition.clear()
+        self.world_model.reset(dones)

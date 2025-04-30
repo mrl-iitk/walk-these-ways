@@ -85,6 +85,7 @@ class LeggedRobot(BaseTask):
         self.obs_buf = torch.clip(self.obs_buf, -clip_obs, clip_obs)
         if self.privileged_obs_buf is not None:
             self.privileged_obs_buf = torch.clip(self.privileged_obs_buf, -clip_obs, clip_obs)
+        # self.rew_buf.to(self.device)
         return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
 
     def post_physics_step(self):
@@ -119,8 +120,9 @@ class LeggedRobot(BaseTask):
         # compute observations, rewards, resets, ...
         self.check_termination()
         self.compute_reward()
-        env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
-        self.reset_idx(env_ids)
+        if self.reset_buf.any():
+            env_ids = torch.arange(self.num_envs, device=self.device)
+            self.reset_idx(env_ids)
         self.compute_observations()
 
         self.last_last_actions[:] = self.last_actions[:]

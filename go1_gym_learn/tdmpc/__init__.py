@@ -9,13 +9,21 @@ from ml_logger import logger
 from params_proto import PrefixProto
 import os
 import copy
+from termcolor import colored
 
-from common.world_model import WorldModel
+from .common.world_model import WorldModel
+from .common.online_trainer import OnlineTrainer
 from .rollout_storage import RolloutStorage
-from common.parser import parse_cfg
-
+from .common.buffer import Buffer
+from .common.parser import parse_cfg
+from .common.logger import Logger
 from go1_gym import MINI_GYM_ROOT_DIR
-
+# def par(cfg: dict):
+    # print(cfg, "p")
+    # assert cfg.steps > 0, 'Must train for at least 1 step.'
+    # cfgr = parse_cfg(cfg)
+    # print(cfgr)
+    # return cfgr
 
 def class_to_dict(obj) -> dict:
     if not hasattr(obj, "__dict__"):
@@ -66,21 +74,27 @@ class RunnerArgs(PrefixProto, cli=False):
 
 class Runner:
     
-    def __init__(self, env, device='cpu'):
+    def __init__(self, env, conf, device='cpu'):
         from .tdmpc import TDMPC # [need to change tdmpc.py]
-
+        
         self.device = device
         self.env = env
+        cfg = conf
+        cfg.obs_shape = {'state': (70,)}
+        cfg.num_envs = 4
+        # print(type(cfg),
+        # 'Insider Runner')
+        # print(cfg)
+        # cfg = par()
+        # print(conf, "-p-")
+        # cfg = parse_cfg(conf)
+        print(colored('Work dir:', 'yellow', attrs=['bold']), cfg.work_dir)
+        self.cfg = cfg
+        # assert cfg.steps > 0, 'Must train for at least 1 step.'
 
-        with hydra.initialize(config_path='.'):
-            cfg = hydra.compose(config_name='config')
-            cfg = parse_cfg(cfg)
-            assert cfg.steps > 0, 'Must train for at least 1 step.'
-
-        assert cfg.steps > 0, 'Must train for at least 1 step.'
-        cfg = parse_cfg(cfg)
         # [need to replace ActorCritic with WorldModel]
-        world_model = WorldModel(cfg).to(self.device) 
+        # world_model = WorldModel(cfg).to(self.device) 
+        world_model = WorldModel(cfg).to(self.device)
         
         self.alg = TDMPC(world_model, cfg, device=self.device)
         self.num_steps_per_env = RunnerArgs.num_steps_per_env
@@ -96,6 +110,17 @@ class Runner:
 
         self.env.reset()
 
+    def train(self):
+        trainer = OnlineTrainer(
+            cfg=self.cfg,
+            env=self.env,
+            agent=self.alg,
+            buffer=Buffer(self.cfg),
+            logger=Logger(self.cfg)
+        )
+        trainer.train()
+        print('\nTraining completed successfully')
+        
     def learn(self, num_learning_iterations, init_at_random_ep_len=False, eval_freq=100, eval_expert=False):
         from ml_logger import logger
         # initialize writer
@@ -114,7 +139,7 @@ class Runner:
         obs, privileged_obs, obs_history = obs_dict["obs"], obs_dict["privileged_obs"], obs_dict["obs_history"]
         obs, privileged_obs, obs_history = obs.to(self.device), privileged_obs.to(self.device), obs_history.to(
             self.device)
-        self.alg.world_model.train()
+        self.alg.model.train()
 
         rewbuffer = deque(maxlen=100)
         lenbuffer = deque(maxlen=100)
@@ -122,7 +147,8 @@ class Runner:
         lenbuffer_eval = deque(maxlen=100)
         cur_reward_sum = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
         cur_episode_length = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
-
+        
+        
         if hasattr(self.env, "curriculum"):
             caches.__init__(curriculum_bins=len(self.env.curriculum))
 
@@ -132,8 +158,7 @@ class Runner:
             # Rollout
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):
-                    actions_train = self.alg.act(obs[:num_train_envs], privileged_obs[:num_train_envs], # [Prio]
-                                                 obs_history[:num_train_envs])
+                    actions_train = self.alg.act(obs[:num_train_envs])
                     # if eval_expert:
                     #     actions_eval = self.alg.world_model.act_teacher(obs[num_train_envs:],
                     #                                                      privileged_obs[num_train_envs:])
@@ -148,7 +173,7 @@ class Runner:
 
                     obs, privileged_obs, obs_history, rewards, dones = obs.to(self.device), privileged_obs.to(
                         self.device), obs_history.to(self.device), rewards.to(self.device), dones.to(self.device)
-                    self.alg.process_env_step(rewards[:num_train_envs], dones[:num_train_envs], infos)  # [Prio]
+                    # self.alg.process_env_step(rewards[:num_train_envs], dones[:num_train_envs], infos)  # [Prio]
 
                     if 'train/episode' in infos:
                         with logger.Prefix(metrics="train/episode"):
@@ -199,16 +224,25 @@ class Runner:
                 # Learning step 
                 # self.alg.compute_returns(obs[:num_train_envs], privileged_obs[:num_train_envs]) # [Calculates Advantage Function so commented]
 
-                if it % eval_freq == 0:
-                    self.env.reset_evaluation_envs()
+                # if it % eval_freq == 0:
+                #     self.env.reset_evaluation_envs()
 
-                if it % eval_freq == 0:
-                    logger.save_pkl({"iteration": it,
-                                     **caches.slot_cache.get_summary(),
-                                     **caches.dist_cache.get_summary()},
-                                    path=f"curriculum/info.pkl", append=True)
+                # if it % eval_freq == 0:
+                    # logger.save_pkl({"iteration": it,
+                    #                  **caches.slot_cache.get_summary(),
+                    #                  **caches.dist_cache.get_summary()},
+                    #                 path=f"curriculum/info.pkl", append=True)
             
             # [Might have to take average of loss in the actual update function]
+            print("Actions", actions_train.shape)
+            print(actions_train)
+            print("Observations", obs.shape)
+            print(obs)
+            print("Rewards", rewards.shape)
+            print(rewards)
+            print("Dones", dones.shape)
+            print(dones)
+            
             info = self.alg.update()  # [This now returns a TensorDict]
             
             logger.store_metrics(
@@ -221,7 +255,7 @@ class Runner:
                 grad_norm=info['grad_norm']
             )
 
-            # [If pi_info contains additional metrics, you can store those too\
+            # [If pi_info contains additional metrics, you can store those too]
             for key, value in info.items():
                 if key not in ['consistency_loss', 'reward_loss', 'value_loss', 'total_loss', 'grad_norm']:
                     logger.store_metrics(**{key: value})

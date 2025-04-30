@@ -48,3 +48,9 @@ class VelocityTrackingEasyEnv(LeggedRobot):
         obs, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
         return obs
 
+    def rand_act(self):
+        range = self.cfg.normalization.clip_actions
+        action = torch.rand(4, 12)*(2*range) - range
+        return action
+
+

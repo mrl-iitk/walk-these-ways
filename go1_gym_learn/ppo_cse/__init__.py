@@ -6,7 +6,6 @@ import os
 import torch
 from ml_logger import logger
 from params_proto import PrefixProto
-
 from .actor_critic import ActorCritic
 from .rollout_storage import RolloutStorage
 
