@@ -1,0 +1,4 @@
+1. Initialization of _Qs weights
+2. Gradient flow of _Qs weights
+2. Visual IsaacGym crashes on update step
+3. self.model.X does not imply self._Qs.X even though Qs is part of model

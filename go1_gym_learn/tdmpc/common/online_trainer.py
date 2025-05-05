@@ -36,6 +36,7 @@ class OnlineTrainer(Trainer):
 				torch.compiler.cudagraph_mark_step_begin()
 				action = self.agent.act(obs, t0=t==0, eval_mode=True)
 				obs_dict, reward, done, info = self.env.step(action)
+				# print("Reward:", reward)
 				# print(done)
 				# print(self._step)
 				obs = obs_dict["obs"]
@@ -49,7 +50,7 @@ class OnlineTrainer(Trainer):
 				# self.logger.video.save(self._step)
 		return dict(
 			episode_reward=torch.cat(ep_rewards).mean(),
-			# episode_success=info['success'].mean(),
+			# episode_success=inFalsefo['success'].mean(),
 		)
 
 	def to_td(self, obs, action=None, reward=None):
@@ -71,16 +72,20 @@ class OnlineTrainer(Trainer):
 		return td
 
 	def train(self):
+
 		"""Train a TD-MPC2 agent."""
-		train_metrics, done, eval_next = {}, torch.tensor(True), True
+		train_metrics, done, eval_next = {}, torch.tensor(True), False
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
+			if self._step % 100 ==0:
+				print("Step:", self._step)
 			if self._step % self.cfg.eval_freq == 0:
-				eval_next = True
+				eval_next = False
 
-			print(self._step, ":", done)
-			print(train_metrics)
+			# print(self._step, ":", done)
+			# print("Train Metrics:", train_metrics)
 			# Reset environment
+			# print("Done:", done)
 			if done.any():
 				
 				assert done.all(), 'Vectorized environments must reset all environments at once.'
@@ -94,10 +99,7 @@ class OnlineTrainer(Trainer):
 				if self._step > 0:
 					device = torch.device("cuda:0")
 					tds = torch.cat([td.to(device) for td in self._tds])
-					print("tds shape:", tds.shape)
-					print("tds keys:", tds.keys())
-					for key in tds.keys():
-						print(f"{key} shape: {tds[key].shape}")
+					# 
 					train_metrics.update(
 						episode_reward=tds['reward'].nansum(0).mean(),
 						# episode_success=info['success'].nanmean(),
@@ -105,28 +107,28 @@ class OnlineTrainer(Trainer):
 					train_metrics.update(self.common_metrics())
 					print("Train Metrics:", train_metrics)
 					# self.logger.log(train_metrics, 'train')
+
+
 					flat_tds = tds.view(-1)  # Flattens from [T, num_envs] to [T * num_envs]
 
-					# Optional: tag episode index if you want to use `traj_key='episode'`
-					# if self.cfg.traj_tag:
-					# 	# Example: assign episode ids per env
-					# 	episode_ids = torch.arange(self.cfg.num_envs).repeat(tds.shape[0])
-					# 	flat_tds['episode'] = episode_ids
-
-					# Add to buffer
+					# Add to buffer	
 					self._ep_idx = self.buffer.add(flat_tds)
 					# self._ep_idx = self.buffer.add(tds)
 
 				obs_dict = self.env.reset()
 				obs = obs_dict["obs"]
-				self._tds = [self.to_td(obs)]
+				self._tds = []
 
 			# Collect experience
 			if self._step > self.cfg.seed_steps:
-				action = self.agent.act(obs, t0=len(self._tds)==1)
+				action = self.agent.act(obs, t0=len(self._tds)==0)
 			else:
 				action = self.env.rand_act()
+			#	action = self.agent.act(obs, t0=len(self._tds)==0)			
 			obs_dict, reward, done, info = self.env.step(action)
+			if torch.isnan(reward).any():
+				print("Reward is faulty me hi Khot hai \n\n \n\n\n\n\n\n\n\n\n\n\n\n\n\n")
+			# print("Reward: ", reward)
 			obs = obs_dict["obs"]
 			self._tds.append(self.to_td(obs, action, reward))
 
@@ -135,13 +137,18 @@ class OnlineTrainer(Trainer):
 				if self._step == self.cfg.seed_steps:
 					# num_updates = int(self.cfg.seed_steps / self.cfg.steps_per_update)
 					num_updates = int(self.cfg.seed_steps / 4)
+					num_updates = 1	
 					print('Pretraining agent on seed data...')
 				else:
 					# num_updates = max(1, int(self.cfg.num_envs / self.cfg.steps_per_update))
-					num_updates = max(1,int(self.cfg.seed_steps / 4))	
-				for _ in range(num_updates):
+					num_updates = max(1,int(self.cfg.num_envs / 4))	
+				print("Step:", self._step, num_updates)
+				for i in range(num_updates):
+					print("Update step:", i)
 					_train_metrics = self.agent.update(self.buffer)
 				train_metrics.update(_train_metrics)
+				# print("Step: ",self._step, train_metrics)
+
 
 			self._step += self.cfg.num_envs
 	

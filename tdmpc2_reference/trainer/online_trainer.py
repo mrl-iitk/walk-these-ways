@@ -109,7 +109,9 @@ class OnlineTrainer(Trainer):
 					num_updates = 1
 				for _ in range(num_updates):
 					_train_metrics = self.agent.update(self.buffer)
+				# print(self._step, train_metrics)
 				train_metrics.update(_train_metrics)
+
 
 			self._step += 1
 

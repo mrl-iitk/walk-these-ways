@@ -1,7 +1,9 @@
 import hydra
+from termcolor import colored
 
 
-@hydra.main(config_name='config', config_path='/home/nishant/svan/walk-these-ways/go1_gym_learn/tdmpc')
+
+@hydra.main(config_name='config', config_path='/home/nyann/svan/walk-these-ways/go1_gym_learn/tdmpc')
 def train_m2(cfg: dict):
     headless=True
     import isaacgym
@@ -210,19 +212,19 @@ def train_m2(cfg: dict):
     Cfg.commands.binary_phases = True
     Cfg.commands.gaitwise_curricula = True
 
-    Cfg.env.num_envs = 4000
+    Cfg.env.num_envs = 4
 
     Cfg.viewer.pos = [50, 50, 8]
     Cfg.viewer.lookat = [55, 55, 3]
 
-    env = VelocityTrackingEasyEnv(sim_device='cuda:2', headless=False, cfg=Cfg)
+    env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=False, cfg=Cfg)
 
     # log the experiment parameters
     logger.log_params(AC_Args=vars(AC_Args), PPO_Args=vars(PPO_Args), RunnerArgs=vars(RunnerArgs),
                       Cfg=vars(Cfg))
 
     env = HistoryWrapper(env)
-    gpu_id = 2
+    gpu_id = 0
     runner = Runner(env, device=f"cuda:{gpu_id}")
     runner.learn(num_learning_iterations=10000, init_at_random_ep_len=True, eval_freq=100)
 

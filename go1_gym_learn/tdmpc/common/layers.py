@@ -188,6 +188,9 @@ from tensordict import TensorDict
 from torch.func import functional_call, stack_module_state
 from torch import vmap
 
+
+
+
 def custom_new_unsafe(
         cls,
         source = None,
@@ -279,43 +282,40 @@ class Ensemble(nn.Module):
     def _call(self, params, *args, **kwargs):
         empty_buffers = {}
         return functional_call(self.module, (params, empty_buffers), args)
-        return self.fmodel(params, empty_buffers, *args, **kwargs)
 
     def forward(self, *args, **kwargs):
-        # print("Input device(s):")
-        # for i, arg in enumerate(args):
-        #     if isinstance(arg, torch.Tensor):
-        #         print(f"arg[{i}]:", arg.device)
 
-        # print("\nParam device(s):")
-        # for k, v in self.params.items():
-        #     if isinstance(v, torch.Tensor):
-        #         print(f"{k}:", v.device)
-
-        self.params = {k: v.to(args[0].device) for k, v in self.params.items()}
+        # self.params = {k: v.to(args[0].device) for k, v in self.params.items()}
 
         return vmap(self._call, (0, None), randomness="different")(self.params, *args, **kwargs)
-
-        # Pack args and kwargs properly for vmap to handle
-        
 
     def __repr__(self):
         return f'Vectorized {len(self)}x ' + self._repr
 		# print("\n \n", params, "\n \n", params_dict)
 
+    def set_parameters(self, new_params):
+        self.params = new_params
+
+	
+    def to(self, *args, **kwargs):
+        device = args[0] if args else kwargs.get('device', None)
+
+		# Ensure parameters remain leaf nodes
+        self.params = torch.utils._pytree.tree_map(
+			lambda x: nn.Parameter(x.to(*args, **kwargs)),
+			self.params
+		)
 		
-    def __len__(self):
-        return self._n
+        self.buffers_ = torch.utils._pytree.tree_map(
+			lambda x: x.to(*args, **kwargs),
+			self.buffers_
+		)
+		
+        self.module.to(*args, **kwargs)
 
-    # def _call(self, params, *args, **kwargs):
-    #     with params.to_module(self.module):
-    #         return self.module(*args, **kwargs)
 
-    # def forward(self, *args, **kwargs):
-    #     return torch.vmap(self._call, (0, None), randomness="different")(self.params, *args, **kwargs)
+        return self
 
-    def __repr__(self):
-        return f'Vectorized {len(self)}x ' + self._repr
 
 
 class ShiftAug(nn.Module):

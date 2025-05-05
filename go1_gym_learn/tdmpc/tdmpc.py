@@ -16,6 +16,22 @@ from go1_gym_learn.tdmpc import WorldModel
 from go1_gym_learn.tdmpc import RolloutStorage
 from go1_gym_learn.tdmpc import caches
 
+from torch.utils._pytree import tree_flatten
+
+
+def check_target_q_update(model):
+    diffs = {}
+    with torch.no_grad():
+        for (name_tgt, tgt_param), (name_src, src_param) in zip(
+            model._target_Qs.named_parameters(),
+            model._detach_Qs.named_parameters()
+        ):
+            if name_tgt != name_src:
+                print(f"⚠️ Name mismatch: {name_tgt} vs {name_src}")
+                continue
+            diff = (tgt_param - src_param).abs().mean().item()
+            diffs[name_tgt] = diff
+    return diffs
 
 class TDMPC_Args(PrefixProto):
     # algorithm
@@ -36,6 +52,7 @@ class TDMPC_Args(PrefixProto):
 
 
 class TDMPC(torch.nn.Module):
+    
     world_model: WorldModel      
     # [Changed Function]
     def __init__(self, world_model, cfg, device='cpu'):
@@ -43,11 +60,27 @@ class TDMPC(torch.nn.Module):
         self.cfg = cfg
         self.device = device
         self.model = world_model
+        print("\n--- Checking _Qs.parameters() ---")
+        for i, param in enumerate(self.model._Qs.parameters()):
+            print(f"[Param {i}] shape: {param.shape}, requires_grad: {param.requires_grad}, is_leaf: {param.is_leaf}")
+
+        print("\n--- Checking _Qs.params ---")
+        if isinstance(self.model._Qs.params, dict):  # In case you're using dict
+            for k, v in self.model._Qs.params.items():
+                print(f"[Key: {k}] shape: {v.shape}, requires_grad: {v.requires_grad}, is_leaf: {v.is_leaf}")
+        elif isinstance(self.model._Qs.params, list):  # If it's a list (e.g., from stack_module_state)
+            for i, p in enumerate(self.model._Qs.params):
+                print(f"[Params List {i}]")
+                if isinstance(p, dict):
+                    for k, v in p.items():
+                        print(f"    - {k}: shape {v.shape}, requires_grad: {v.requires_grad}, is_leaf: {v.is_leaf}")
+                else:
+                    print(f"    - Unexpected format: {type(p)}")
         self.optim = torch.optim.Adam([
 			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
 			{'params': self.model._dynamics.parameters()},
 			{'params': self.model._reward.parameters()},
-			{'params': self.model._Qs.parameters()},
+			{'params': self.model._Qs.params.values()},
 			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []
 			 }
 		], lr=self.cfg.lr, capturable=True)
@@ -157,8 +190,10 @@ class TDMPC(torch.nn.Module):
             G = G + discount * reward
             discount_update = self.discount[torch.tensor(task)] if self.cfg.multitask else self.discount
             discount = discount * discount_update
-        return G + discount * self.model.Q(z, self.model.pi(z, task)[1], task, return_type='avg')
+        q_value = self.model.Q(z, self.model.pi(z, task)[1], task, return_type='avg').to(self.device)
 
+        return G + discount * q_value
+    
     @torch.no_grad()
     def _plan(self, obs, t0=False, eval_mode=False, task=None):
         """
@@ -274,10 +309,14 @@ class TDMPC(torch.nn.Module):
         """
         pi = self.model.pi(next_z, task)[1]
         discount = self.discount[task].unsqueeze(-1) if self.cfg.multitask else self.discount
-        return reward + discount * self.model.Q(next_z, pi, task, return_type='min', target=True)
-
+        q_value = self.model.Q(next_z, pi, task, return_type='min', target=True).to(self.device)
+        return reward + discount * q_value
+    
     def _update(self, obs, action, reward, task=None):
         # Compute targets
+        # print("Parameters lo ji:", list(self.model._Qs.parameters()))
+        # print("Parameters lo mji:", self.model._encoder.parameters())
+
         with torch.no_grad():
             next_z = self.model.encode(obs[1:], task)
             td_targets = self._td_target(next_z, reward, task)
@@ -297,10 +336,8 @@ class TDMPC(torch.nn.Module):
 
         # Predictions
         _zs = zs[:-1]
-        print("Here reached 1")
         qs = self.model.Q(_zs, action, task, return_type='all')
         reward_preds = self.model.reward(_zs, action, task)
-        print("Hre reached 2")
         # Compute losses
         reward_loss, value_loss = 0, 0
         for t, (rew_pred_unbind, rew_unbind, td_targets_unbind, qs_unbind) in enumerate(zip(reward_preds.unbind(0), reward.unbind(0), td_targets.unbind(0), qs.unbind(1))):
@@ -317,8 +354,25 @@ class TDMPC(torch.nn.Module):
             self.cfg.value_coef * value_loss
         )
 
-        # Update model
+        # for name, param in self.model.named_parameters():
+        #     print(f"{name}: requires_grad={param.requires_grad}, grad={'None' if param.grad is None else 'Exists'}")
+        # for name, param in self.model.named_parameters():
+        #     if param.grad is not None:
+        #         print(f"Gradient for {name}: {param.grad.norm().item():.6f}")
+        #     else:
+        #         print(f"No gradient for {name}")
+
+        # print("\n--- _Qs Parameters ---")
+        # for name, param in self.model._Qs.named_parameters():
+        #     print(f"_Qs.{name}: grad={'None' if param.grad is None else 'Exists'}")
+
+        # print("\n--- _target_Qs Parameters ---")
+        # for name, param in self.model._target_Qs.named_parameters():
+        #     print(f"_target_Qs.{name}: grad={'None' if param.grad is None else 'Exists'}")
+        #         # Update model
+    
         total_loss.backward()
+        # print("\n--- Gradients for Q network parameters ---")
         grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip_norm)
         self.optim.step()
         self.optim.zero_grad(set_to_none=True)
@@ -329,18 +383,48 @@ class TDMPC(torch.nn.Module):
         # Update target Q-functions
         self.model.soft_update_target_Q()
 
+        # print("Before soft update:")
+        # before_diffs = check_target_q_update(self.model)
+
+        # self.model.soft_update_target_Q()
+
+        # print("After soft update:")
+        # after_diffs = check_target_q_update(self.model)
+
+        # for name in before_diffs:
+        #  print(f"{name}: Δ before = {before_diffs[name]:.6e}, Δ after = {after_diffs[name]:.6e}")
+
         # Return training statistics
         self.model.eval()
+        # print("consistency_loss: ", consistency_loss,
+		# 	"reward_loss:", reward_loss,
+		# 	"value_loss:", value_loss,
+		# 	"pi_loss:", pi_loss,
+		# 	"total_loss:", total_loss,
+		# 	"grad_norm:", grad_norm,
+		# 	"pi_grad_norm:", pi_grad_norm,
+		# 	"pi_scale:", self.scale.value,)
         return TensorDict({
-            "consistency_loss": consistency_loss,
-            "reward_loss": reward_loss,
-            "value_loss": value_loss,
-            "pi_loss": pi_loss,
-            "total_loss": total_loss,
-            "grad_norm": grad_norm,
-            "pi_grad_norm": pi_grad_norm,
-            "pi_scale": self.scale.value,
-        }).detach().mean()
+			"consistency_loss": consistency_loss,
+			"reward_loss": reward_loss,
+			"value_loss": value_loss,
+			"pi_loss": pi_loss,
+			"total_loss": total_loss,
+			"grad_norm": grad_norm,
+			"pi_grad_norm": pi_grad_norm,
+			"pi_scale": self.scale.value,
+		}, batch_size=[]).detach().mean()
+        # return None
+        # return TensorDict({
+        #     "consistency_loss": consistency_loss,
+        #     "reward_loss": reward_loss,
+        #     "value_loss": value_loss,
+        #     "pi_loss": pi_loss,
+        #     "total_loss": total_loss,
+        #     "grad_norm": grad_norm,
+        #     "pi_grad_norm": pi_grad_norm,
+        #     "pi_scale": self.scale.value,
+        # }).detach().mean()
 
     def update(self, buffer):
         """

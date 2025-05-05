@@ -76,12 +76,15 @@ class Runner:
     
     def __init__(self, env, conf, device='cpu'):
         from .tdmpc import TDMPC # [need to change tdmpc.py]
-        
+        # device='cpu'
         self.device = device
         self.env = env
         cfg = conf
         cfg.obs_shape = {'state': (70,)}
         cfg.num_envs = 4
+        cfg.steps_per_update = 1
+        cfg.device = device
+
         # print(type(cfg),
         # 'Insider Runner')
         # print(cfg)
@@ -91,11 +94,10 @@ class Runner:
         print(colored('Work dir:', 'yellow', attrs=['bold']), cfg.work_dir)
         self.cfg = cfg
         # assert cfg.steps > 0, 'Must train for at least 1 step.'
-
         # [need to replace ActorCritic with WorldModel]
-        # world_model = WorldModel(cfg).to(self.device) 
         world_model = WorldModel(cfg).to(self.device)
-        
+        # world_model = WorldModel(cfg)
+
         self.alg = TDMPC(world_model, cfg, device=self.device)
         self.num_steps_per_env = RunnerArgs.num_steps_per_env
 

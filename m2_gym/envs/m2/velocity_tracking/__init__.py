@@ -50,7 +50,7 @@ class VelocityTrackingEasyEnv(LeggedRobot):
 
     def rand_act(self):
         range = self.cfg.normalization.clip_actions
-        action = torch.rand(4, 12)*(2*range) - range
+        action = torch.rand(self.cfg.env.num_envs, 12)*(2*range) - range
         return action
 
 

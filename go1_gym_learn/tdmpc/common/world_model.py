@@ -35,21 +35,21 @@ class WorldModel(nn.Module):
 		self.init()
 
 	def init(self):
-		# Create params  
-		# print(self._Qs.params)
-		# shapes = [tensor.shape for tensor in self._Qs.params]; print(f"All shapes: {shapes}")
+		cfg = self.cfg
 		self._detach_Qs_params = torch.utils._pytree.tree_map(lambda x: x.detach(), self._Qs.params)
-
-		# Clone parameters (copy values)
 		self._target_Qs_params = torch.utils._pytree.tree_map(lambda x: x.detach().clone(), self._Qs.params)
 
 		# Deepcopy the modules (architecture, buffers, etc.)
-		self._detach_Qs = deepcopy(self._Qs)
-		self._target_Qs = deepcopy(self._Qs)
+		self._detach_Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)]).to(cfg.device)
+		self._target_Qs = layers.Ensemble([layers.mlp(cfg.latent_dim + cfg.action_dim + cfg.task_dim, 2*[cfg.mlp_dim], max(cfg.num_bins, 1), dropout=cfg.dropout) for _ in range(cfg.num_q)]).to(cfg.device)
+		# self.apply(init.weight_init)
 
 		# Reassign parameters (functional-style, so you store them separately)
 		self._detach_Qs.params = self._detach_Qs_params
 		self._target_Qs.params = self._target_Qs_params
+
+		# Problematic Line
+
 
 	def __repr__(self):
 		repr = 'TD-MPC2 World Model\n'
@@ -65,6 +65,7 @@ class WorldModel(nn.Module):
 
 	def to(self, *args, **kwargs):
 		super().to(*args, **kwargs)
+		self._Qs.to(*args, **kwargs)
 		self.init()
 		return self
 
@@ -80,9 +81,29 @@ class WorldModel(nn.Module):
 		"""
 		Soft-update target Q-networks using Polyak averaging.
 		"""
-		self._target_Qs_params.lerp_(self._detach_Qs_params, self.cfg.tau)
+		from torch.utils._pytree import tree_map
 
+		tau = self.cfg.tau
+		
+		# 1. Clone source tensors outside graph capture
+		cloned_source = tree_map(
+			lambda t: t.clone() if isinstance(t, torch.Tensor) else t,
+			self._detach_Qs_params
+		)
+
+
+		# 2. Use standard math in-place only on target `.data`
+		def safe_polyak_update(target, source):
+			if isinstance(target, torch.Tensor) and isinstance(source, torch.Tensor):
+				updated = (1 - tau) * target + tau * source  # no in-place math here
+				target.data.copy_(updated)
+			return target
+
+		with torch.no_grad():
+			tree_map(safe_polyak_update, self._target_Qs_params, cloned_source)
+	
 	def task_emb(self, x, task):
+
 		"""
 		Continuous task embedding for multi-task experiments.
 		Retrieves the task embedding for a given task ID `task`
@@ -106,7 +127,6 @@ class WorldModel(nn.Module):
 			obs = self.task_emb(obs, task)
 		if self.cfg.obs == 'rgb' and obs.ndim == 5:
 			return torch.stack([self._encoder[self.cfg.obs](o) for o in obs])
-		print("Config obs", self.cfg.obs)
 		return self._encoder[self.cfg.obs](obs)
 
 	def next(self, z, a, task):
@@ -176,6 +196,7 @@ class WorldModel(nn.Module):
 			qnet = self._detach_Qs
 		else:
 			qnet = self._Qs
+		# z=z.to('cpu')
 		out = qnet(z)
 
 		if return_type == 'all':

@@ -2,6 +2,8 @@ import torch.nn as nn
 
 
 def weight_init(m):
+	# print(f"Initializing: {m}")  # or m.__class__.__name__
+
 	"""Custom weight initialization for TD-MPC2."""
 	if isinstance(m, nn.Linear):
 		nn.init.trunc_normal_(m.weight, std=0.02)
