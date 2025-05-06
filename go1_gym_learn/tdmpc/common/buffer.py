@@ -20,7 +20,6 @@ class Buffer():
 			traj_key='episode',
 			truncated_key=None,
 			strict_length=True,
-			cache_values=cfg.multitask,
 		)
 		self._batch_size = cfg.batch_size * (cfg.horizon+1)
 		self._num_eps = 0
@@ -66,36 +65,12 @@ class Buffer():
 			LazyTensorStorage(self._capacity, device=self._storage_device)
 		)
 
-	def load(self, td):
-		"""
-		Load a batch of episodes into the buffer. This is useful for loading data from disk,
-		and is more efficient than adding episodes one by one.
-		"""
-		num_new_eps = len(td)
-		episode_idx = torch.arange(self._num_eps, self._num_eps+num_new_eps, dtype=torch.int64)
-		td['episode'] = episode_idx.unsqueeze(-1).expand(-1, td['reward'].shape[1])
-		if self._num_eps == 0:
-			self._buffer = self._init(td[0])
-		td = td.reshape(td.shape[0]*td.shape[1])
-		self._buffer.extend(td)
-		self._num_eps += num_new_eps
-		return self._num_eps
-
-	def add(self, td):
-		"""Add an episode to the buffer."""
-		td['episode'] = torch.full_like(td['reward'], self._num_eps, dtype=torch.int64)
-		if self._num_eps == 0:
-			self._buffer = self._init(td)
-		self._buffer.extend(td)
-		self._num_eps += 1
-		return self._num_eps
-
 	def _prepare_batch(self, td):
 		"""
 		Prepare a sampled batch for training (post-processing).
 		Expects `td` to be a TensorDict with batch size TxB.
 		"""
-		td = td.select("obs", "action", "reward", "terminated", "task", strict=False).to(self._device, non_blocking=True)
+		td = td.select("obs", "action", "reward", "task", strict=False).to(self._device, non_blocking=True)
 		obs = td.get('obs').contiguous()
 		action = td.get('action')[1:].contiguous()
 		reward = td.get('reward')[1:].unsqueeze(-1).contiguous()
@@ -103,6 +78,17 @@ class Buffer():
 		if task is not None:
 			task = task[0].contiguous()
 		return obs, action, reward, task
+
+	def add(self, td):
+		"""Add an episode to the buffer."""
+		td['episode'] = torch.ones_like(td['reward'], dtype=torch.int64) * torch.arange(self._num_eps, self._num_eps+self.cfg.num_envs).to(self._device)
+		td = td.permute(1, 0)
+		if self._num_eps == 0:
+			self._buffer = self._init(td[0])
+		for i in range(self.cfg.num_envs):
+			self._buffer.extend(td[i])
+		self._num_eps += self.cfg.num_envs
+		return self._num_eps
 
 	def sample(self):
 		"""Sample a batch of subsequences from the buffer."""

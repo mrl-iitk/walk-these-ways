@@ -68,7 +68,6 @@ class OnlineTrainer(Trainer):
 			action=action.unsqueeze(0),
 			reward=reward.unsqueeze(0),
 		), batch_size=(1, self.cfg.num_envs,))
-
 		return td
 
 	def train(self):
@@ -77,7 +76,7 @@ class OnlineTrainer(Trainer):
 		train_metrics, done, eval_next = {}, torch.tensor(True), False
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
-			if self._step % 100 ==0:
+			if self._step % 128 ==0:
 				print("Step:", self._step)
 			if self._step % self.cfg.eval_freq == 0:
 				eval_next = False
@@ -106,14 +105,7 @@ class OnlineTrainer(Trainer):
 					)
 					train_metrics.update(self.common_metrics())
 					print("Train Metrics:", train_metrics)
-					# self.logger.log(train_metrics, 'train')
-
-
-					flat_tds = tds.view(-1)  # Flattens from [T, num_envs] to [T * num_envs]
-
-					# Add to buffer	
-					self._ep_idx = self.buffer.add(flat_tds)
-					# self._ep_idx = self.buffer.add(tds)
+					self._ep_idx = self.buffer.add(tds)
 
 				obs_dict = self.env.reset()
 				obs = obs_dict["obs"]
@@ -126,9 +118,6 @@ class OnlineTrainer(Trainer):
 				action = self.env.rand_act()
 			#	action = self.agent.act(obs, t0=len(self._tds)==0)			
 			obs_dict, reward, done, info = self.env.step(action)
-			if torch.isnan(reward).any():
-				print("Reward is faulty me hi Khot hai \n\n \n\n\n\n\n\n\n\n\n\n\n\n\n\n")
-			# print("Reward: ", reward)
 			obs = obs_dict["obs"]
 			self._tds.append(self.to_td(obs, action, reward))
 
@@ -142,9 +131,9 @@ class OnlineTrainer(Trainer):
 				else:
 					# num_updates = max(1, int(self.cfg.num_envs / self.cfg.steps_per_update))
 					num_updates = max(1,int(self.cfg.num_envs / 4))	
-				print("Step:", self._step, num_updates)
+				# print("Step:", self._step, num_updates)
 				for i in range(num_updates):
-					print("Update step:", i)
+					# print("Update step:", i)
 					_train_metrics = self.agent.update(self.buffer)
 				train_metrics.update(_train_metrics)
 				# print("Step: ",self._step, train_metrics)
