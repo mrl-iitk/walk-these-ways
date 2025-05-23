@@ -7,10 +7,10 @@ import numpy as np
 import glob
 import pickle as pkl
 
-from go1_gym.envs import *
-from go1_gym.envs.base.legged_robot_config import Cfg
-from go1_gym.envs.go1.go1_config import config_go1
-from go1_gym.envs.go1.velocity_tracking import VelocityTrackingEasyEnv
+from m2_gym.envs import *
+from m2_gym.envs.base.legged_robot_config import Cfg
+from m2_gym.envs.m2.m2_config import config_m2
+from m2_gym.envs.m2.velocity_tracking import VelocityTrackingEasyEnv
 
 from tqdm import tqdm
 
@@ -72,14 +72,14 @@ def load_env(label, headless=False):
     Cfg.domain_rand.randomize_lag_timesteps = True
     Cfg.control.control_type = "actuator_net"
 
-    from go1_gym.envs.wrappers.history_wrapper import HistoryWrapper
+    from m2_gym.envs.wrappers.history_wrapper import HistoryWrapper
 
     env = VelocityTrackingEasyEnv(sim_device='cuda:0', headless=False, cfg=Cfg)
     env = HistoryWrapper(env)
 
     # load policy
     from ml_logger import logger
-    from go1_gym_learn.ppo_cse.actor_critic import ActorCritic
+    from m2_gym_learn.ppo_cse.actor_critic import ActorCritic
 
     policy = load_policy(logdir)
 
@@ -90,7 +90,7 @@ def play_go1(headless=True):
     from ml_logger import logger
 
     from pathlib import Path
-    from go1_gym import MINI_GYM_ROOT_DIR
+    from m2_gym import MINI_GYM_ROOT_DIR
     import glob
     import os
 

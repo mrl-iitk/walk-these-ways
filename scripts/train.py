@@ -4,19 +4,19 @@ def train_go1(headless=True):
     assert isaacgym
     import torch
 
-    from go1_gym.envs.base.legged_robot_config import Cfg
-    from go1_gym.envs.go1.go1_config import config_go1
-    from go1_gym.envs.go1.velocity_tracking import VelocityTrackingEasyEnv
+    from m2_gym.envs.base.legged_robot_config import Cfg
+    from m2_gym.envs.m2.m2_config import config_m2
+    from m2_gym.envs.m2.velocity_tracking import VelocityTrackingEasyEnv
 
     from ml_logger import logger
 
-    from go1_gym_learn.ppo_cse import Runner
-    from go1_gym.envs.wrappers.history_wrapper import HistoryWrapper
-    from go1_gym_learn.ppo_cse.actor_critic import AC_Args
-    from go1_gym_learn.ppo_cse.ppo import PPO_Args
-    from go1_gym_learn.ppo_cse import RunnerArgs
+    from m2_gym_learn.ppo_cse import Runner
+    from m2_gym.envs.wrappers.history_wrapper import HistoryWrapper
+    from m2_gym_learn.ppo_cse.actor_critic import AC_Args
+    from m2_gym_learn.ppo_cse.ppo import PPO_Args
+    from m2_gym_learn.ppo_cse import RunnerArgs
 
-    config_go1(Cfg)
+    config_m2(Cfg)
 
     Cfg.commands.num_lin_vel_bins = 30
     Cfg.commands.num_ang_vel_bins = 30
@@ -29,7 +29,7 @@ def train_go1(headless=True):
 
     Cfg.domain_rand.lag_timesteps = 6
     Cfg.domain_rand.randomize_lag_timesteps = True
-    Cfg.control.control_type = "actuator_net"
+    Cfg.control.control_type = "P"
 
     Cfg.domain_rand.randomize_rigids_after_start = False
     Cfg.env.priv_observe_motion = False
@@ -93,17 +93,21 @@ def train_go1(headless=True):
     Cfg.domain_rand.tile_height_curriculum = False
     Cfg.domain_rand.tile_height_update_interval = 1000000
     Cfg.domain_rand.tile_height_curriculum_step = 0.01
-    Cfg.terrain.border_size = 0.0
+    Cfg.terrain.border_size = 20.0
     Cfg.terrain.mesh_type = "trimesh"
-    Cfg.terrain.num_cols = 30
-    Cfg.terrain.num_rows = 30
-    Cfg.terrain.terrain_width = 5.0
-    Cfg.terrain.terrain_length = 5.0
+    Cfg.terrain.num_cols = 10
+    Cfg.terrain.num_rows = 12
+    Cfg.terrain.terrain_width = 10.0
+    Cfg.terrain.terrain_length = 10.0
     Cfg.terrain.x_init_range = 0.2
     Cfg.terrain.y_init_range = 0.2
     Cfg.terrain.teleport_thresh = 0.3
     Cfg.terrain.teleport_robots = False
-    Cfg.terrain.center_robots = True
+    Cfg.terrain.curriculum = False
+    Cfg.terrain.terrain_proportions = [0, 0, 0, 0, 0, 0, 0, 0, 1.0]
+    # Cfg.terrain.terrain_proportions = [0, 0.0, 0, 0, 0, 0, 0.5, 0, 0.5]
+    Cfg.terrain.measure_heights = False
+    Cfg.terrain.center_robots = False
     Cfg.terrain.center_span = 4
     Cfg.terrain.horizontal_scale = 0.10
     Cfg.rewards.use_terminal_foot_height = False
@@ -113,27 +117,35 @@ def train_go1(headless=True):
     Cfg.rewards.terminal_body_ori = 1.6
 
     Cfg.commands.resampling_time = 10
-
+    Cfg.commands.command_curriculum = True
+    
+    Cfg.reward_scales.action_rate = -0.03
+    Cfg.reward_scales.tracking_lin_vel = 4.0
+    Cfg.reward_scales.tracking_ang_vel = 3.5
+    Cfg.reward_scales.torques = -0.0001
     Cfg.reward_scales.feet_slip = -0.04
-    Cfg.reward_scales.action_smoothness_1 = -0.1
-    Cfg.reward_scales.action_smoothness_2 = -0.1
+    Cfg.reward_scales.action_smoothness_1 = -0.05
+    Cfg.reward_scales.action_smoothness_2 = -0.005
     Cfg.reward_scales.dof_vel = -1e-4
     Cfg.reward_scales.dof_pos = -0.0
+    Cfg.reward_scales.dof_acc = -2.5e-7
+    Cfg.reward_scales.dof_pos_limits = -10
+    Cfg.rewards.soft_dof_pos_limit = 0.9
     Cfg.reward_scales.jump = 10.0
     Cfg.reward_scales.base_height = 0.0
     Cfg.rewards.base_height_target = 0.30
     Cfg.reward_scales.estimation_bonus = 0.0
-    Cfg.reward_scales.raibert_heuristic = -10.0
+    Cfg.reward_scales.raibert_heuristic = -2.0
     Cfg.reward_scales.feet_impact_vel = -0.0
     Cfg.reward_scales.feet_clearance = -0.0
     Cfg.reward_scales.feet_clearance_cmd = -0.0
-    Cfg.reward_scales.feet_clearance_cmd_linear = -30.0
+    Cfg.reward_scales.feet_clearance_cmd_linear = -25.0
     Cfg.reward_scales.orientation = 0.0
     Cfg.reward_scales.orientation_control = -5.0
     Cfg.reward_scales.tracking_stance_width = -0.0
     Cfg.reward_scales.tracking_stance_length = -0.0
-    Cfg.reward_scales.lin_vel_z = -0.02
-    Cfg.reward_scales.ang_vel_xy = -0.001
+    Cfg.reward_scales.lin_vel_z = -0.5
+    Cfg.reward_scales.ang_vel_xy = -0.1
     Cfg.reward_scales.feet_air_time = 0.0
     Cfg.reward_scales.hop_symmetry = 0.0
     Cfg.rewards.kappa_gait_probs = 0.07
@@ -154,7 +166,7 @@ def train_go1(headless=True):
     Cfg.commands.lin_vel_y = [-0.6, 0.6]
     Cfg.commands.ang_vel_yaw = [-1.0, 1.0]
     Cfg.commands.body_height_cmd = [-0.25, 0.15]
-    Cfg.commands.gait_frequency_cmd_range = [2.0, 4.0]
+    Cfg.commands.gait_frequency_cmd_range = [1.5, 2.5]
     Cfg.commands.gait_phase_cmd_range = [0.0, 1.0]
     Cfg.commands.gait_offset_cmd_range = [0.0, 1.0]
     Cfg.commands.gait_bound_cmd_range = [0.0, 1.0]
@@ -169,7 +181,7 @@ def train_go1(headless=True):
     Cfg.commands.limit_vel_y = [-0.6, 0.6]
     Cfg.commands.limit_vel_yaw = [-5.0, 5.0]
     Cfg.commands.limit_body_height = [-0.25, 0.15]
-    Cfg.commands.limit_gait_frequency = [2.0, 4.0]
+    Cfg.commands.limit_gait_frequency = [1.5, 2.5]
     Cfg.commands.limit_gait_phase = [0.0, 1.0]
     Cfg.commands.limit_gait_offset = [0.0, 1.0]
     Cfg.commands.limit_gait_bound = [0.0, 1.0]
@@ -213,13 +225,13 @@ def train_go1(headless=True):
     env = HistoryWrapper(env)
     gpu_id = 0
     runner = Runner(env, device=f"cuda:{gpu_id}")
-    runner.learn(num_learning_iterations=100000, init_at_random_ep_len=True, eval_freq=100)
+    runner.learn(num_learning_iterations=20001, init_at_random_ep_len=True, eval_freq=100)
 
 
 if __name__ == '__main__':
     from pathlib import Path
     from ml_logger import logger
-    from go1_gym import MINI_GYM_ROOT_DIR
+    from m2_gym import MINI_GYM_ROOT_DIR
 
     stem = Path(__file__).stem
     logger.configure(logger.utcnow(f'gait-conditioned-agility/%Y-%m-%d/{stem}/%H%M%S.%f'),

@@ -1,0 +1,155 @@
+controller_manager:
+  ros__parameters:
+    use_sim_time: False
+    update_rate: 250  # Hz
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    joint_group_effort_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+joint_group_effort_controller:
+  ros__parameters:
+    use_sim_time: False
+    joints:
+          - fr_abd_j
+          - fr_hip_j
+          - fr_knee_j
+          - fl_abd_j
+          - fl_hip_j
+          - fl_knee_j
+          - rl_abd_j
+          - rl_hip_j
+          - rl_knee_j
+          - rr_abd_j
+          - rr_hip_j
+          - rr_knee_j
+    command_interfaces:
+      - effort
+    state_interfaces:
+      - position
+      - velocity
+
+    # gains:
+    #   fr_abd_j : {p: 200.2, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   fr_hip_j : {p: 60.2, i: 0.0, d: 1.5, i_clamp: 0.0}
+    #   fr_knee_j : {p: 42.415, i: 0.0, d: 0.5, i_clamp: 0.0}
+    #   fl_abd_j : {p: 200.2, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   fl_hip_j : {p: 60.2, i: 0.0, d: 1.5, i_clamp: 0.0}
+    #   fl_knee_j : {p: 42.415, i: 0.0, d: 0.5, i_clamp: 0.0}
+    #   rr_abd_j : {p: 200.2, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   rr_hip_j : {p: 60.2, i: 0.0, d: 1.5, i_clamp: 0.0}
+    #   rr_knee_j : {p: 42.415, i: 0.0, d: 0.5, i_clamp: 0.0}
+    #   rl_abd_j : {p: 200.2, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   rl_hip_j : {p: 60.2, i: 0.0, d: 1.5, i_clamp: 0.0}
+    #   rl_knee_j : {p: 42.415, i: 0.0, d: 0.5, i_clamp: 0.0}
+      
+    # gains:
+    #   fr_abd_j : {p: 250.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   fr_hip_j : {p: 40.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   fr_knee_j : {p: 60.0, i: 0.0, d: 0.1, i_clamp: 0.0}
+    #   fl_abd_j : {p: 250.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   fl_hip_j : {p: 40.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   fl_knee_j : {p: 60.0, i: 0.0, d: 0.1, i_clamp: 0.0}
+    #   rr_abd_j : {p: 250.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   rr_hip_j : {p: 40.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   rr_knee_j : {p: 60.0, i: 0.0, d: 0.1, i_clamp: 0.0}
+    #   rl_abd_j : {p: 250.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   rl_hip_j : {p: 40.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   rl_knee_j : {p: 60.0, i: 0.0, d: 0.1, i_clamp: 0.0}
+
+    gains:
+      fr_knee_j        : {p: 100.0, i: 0.2, d: 1.0, i_clamp: 2.5}
+      fr_hip_j  : {p: 100.0, i: 0.2, d: 1.0, i_clamp: 2.5}
+      fr_abd_j  : {p: 100.0, i: 0.2, d: 1.0, i_clamp: 2.5}
+      fl_knee_j        : {p: 100.0, i: 0.2, d: 1.0, i_clamp: 2.5}
+      fl_hip_j  : {p: 100.0, i: 0.2, d: 1.0, i_clamp: 2.5}
+      fl_abd_j  : {p: 100.0, i: 0.2, d: 1.0, i_clamp: 2.5}
+      rr_knee_j        : {p: 100.0, i: 0.2, d: 1.0, i_clamp: 2.5}
+      rr_hip_j  : {p: 100.0, i: 0.2, d: 1.0, i_clamp: 2.5}
+      rr_abd_j  : {p: 100.0, i: 0.2, d: 1.0, i_clamp: 2.5}
+      rl_knee_j        : {p: 100.0, i: 0.2, d: 1.0, i_clamp: 2.5}
+      rl_hip_j  : {p: 100.0, i: 0.2, d: 1.0, i_clamp: 2.5}
+      rl_abd_j  : {p: 100.0, i: 0.2, d: 1.0, i_clamp: 2.5}
+
+    # gains:
+    #   fr_abd_j : {p: 80.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   fr_hip_j : {p: 40.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   fr_knee_j : {p: 20.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   fl_abd_j : {p: 80.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   fl_hip_j : {p: 40.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   fl_knee_j : {p: 20.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   rr_abd_j : {p: 80.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   rr_hip_j : {p: 40.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   rr_knee_j : {p: 20.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   rl_abd_j : {p: 80.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   rl_hip_j : {p: 40.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+    #   rl_knee_j : {p: 20.0, i: 0.0, d: 1.0, i_clamp: 0.0}
+
+# controller_manager:
+#   ros__parameters:
+#     update_rate: 100  # Hz
+
+#     position_controller:
+#       type: position_controllers/JointGroupPositionController
+
+#     joint_state_broadcaster:
+#       type: joint_state_broadcaster/JointStateBroadcaster
+
+# position_controller:
+#   ros__parameters:
+#     joints:
+#         - fr_knee_j
+#         - fr_hip_j
+#         - fr_abd_j
+#         - fl_knee_j
+#         - fl_hip_j
+#         - fl_abd_j
+#         - rr_knee_j
+#         - rr_hip_j
+#         - rr_abd_j
+#         - rl_knee_j
+#         - rl_hip_j
+#         - rl_abd_j
+
+
+# controller_manager:
+#   ros__parameters:
+#     update_rate: 100  # Hz
+#     joint_trajectory_controller:
+#       type: joint_trajectory_controller/JointTrajectoryController
+#     joint_state_broadcaster:
+#       type: joint_state_broadcaster/JointStateBroadcaster
+
+# joint_trajectory_controller:
+#   ros__parameters:
+#     joints:
+#       - fr_knee_j
+#       - fr_hip_j
+#       - fr_abd_j
+#       - fl_knee_j
+#       - fl_hip_j
+#       - fl_abd_j
+#       - rr_knee_j
+#       - rr_hip_j
+#       - rr_abd_j
+#       - rl_knee_j
+#       - rl_hip_j
+#       - rl_abd_j
+
+#     command_interfaces:
+#       - position
+
+#     state_interfaces:
+#       - position
+#       - velocity
+
+#     allow_partial_joints_goal: false
+#     open_loop_control: true
+#     constraints:
+#       stopped_velocity_tolerance: 0.01
+#       goal_time: 0.0
+#       joint1:
+#         trajectory: 0.05
+#         goal: 0.03

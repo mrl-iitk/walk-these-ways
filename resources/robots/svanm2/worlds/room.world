@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<sdf version="1.7">
+  <world name="room_world">
+
+    <!-- Include Gazebo's default ground plane -->
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <!-- Define the room dimensions -->
+    <model name="room">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>5 5 3</size> <!-- Adjust height (z) as needed -->
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>5 5 3</size> <!-- Adjust height (z) as needed -->
+            </box>
+          </geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/White</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>
