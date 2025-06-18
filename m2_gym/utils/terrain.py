@@ -118,16 +118,16 @@ class Terrain:
                                            vertical_scale=cfg.vertical_scale,
                                            horizontal_scale=cfg.horizontal_scale)
         slope = difficulty * 0.4
-        step_height = 0 + 0.15 * difficulty
+        step_height = 0 + 0.1 * difficulty
         discrete_obstacles_height = 0.0 + difficulty * (cfg.max_platform_height - 0.05)
-        stepping_stones_size = 1.5 * (1.05 - difficulty)
+        stepping_stones_size = 1.0 * (1.05 - difficulty)
         stone_distance = 0.05 if difficulty == 0 else 0.1
         if choice < proportions[0]:
             # if choice < proportions[0] / 2:
             slope *= -1
             terrain_utils.pyramid_sloped_terrain(terrain, slope=slope, platform_size=3.)
         elif choice < proportions[1]:
-            # terrain_utils.pyramid_sloped_terrain(terrain, slope=-slope, platform_size=3.)
+            terrain_utils.pyramid_sloped_terrain(terrain, slope=-slope, platform_size=3.)
             terrain_utils.random_uniform_terrain(terrain, min_height=-0.07*difficulty, max_height=0.07*difficulty,
                                                  step=self.cfg.terrain_smoothness, downsampled_scale=0.2)
         elif choice < proportions[3]:
@@ -169,7 +169,7 @@ class Terrain:
         end_y = cfg.border + (j + 1) * cfg.width_per_env_pixels
         self.height_field_raw[start_x: end_x, start_y:end_y] = terrain.height_field_raw
 
-        env_origin_x = (i + 0.1) * cfg.terrain_length + cfg.x_offset * terrain.horizontal_scale
+        env_origin_x = (i + 0.5) * cfg.terrain_length + cfg.x_offset * terrain.horizontal_scale
         env_origin_y = (j + 0.5) * cfg.terrain_width
         x1 = int((cfg.terrain_length / 2. - 1) / terrain.horizontal_scale) + cfg.x_offset
         x2 = int((cfg.terrain_length / 2. + 1) / terrain.horizontal_scale) + cfg.x_offset
@@ -177,8 +177,8 @@ class Terrain:
         y2 = int((cfg.terrain_width / 2. + 1) / terrain.horizontal_scale)
         l_x = end_x-start_x
         l_y = end_y-start_y
-        # env_origin_z = np.max(self.height_field_raw[start_x+int(l_x/2.5): end_x-int(l_x/2.5), start_y+int(l_y/2.5):end_y-int(l_y/2.5)]) * terrain.vertical_scale
-        env_origin_z = np.min(self.height_field_raw[start_x: end_x, start_y:end_y]) * terrain.vertical_scale
+        env_origin_z = np.min(self.height_field_raw[start_x+int(l_x/2.5): end_x-int(l_x/2.5), start_y+int(l_y/2.5):end_y-int(l_y/2.5)]) * terrain.vertical_scale
+        # env_origin_z = np.min(self.height_field_raw[start_x: end_x, start_y:end_y]) * terrain.vertical_scale
 
         cfg.env_origins[i, j] = [env_origin_x, env_origin_y, env_origin_z]
 

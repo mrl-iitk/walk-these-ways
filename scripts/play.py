@@ -60,7 +60,7 @@ def load_env(label, headless=False):
     Cfg.domain_rand.randomize_com_displacement = False
 
     Cfg.env.num_recording_envs = 1
-    Cfg.env.num_envs = 1
+    Cfg.env.num_envs = 10
     Cfg.terrain.num_rows = 5
     Cfg.terrain.num_cols = 5
     Cfg.terrain.border_size = 0
@@ -70,7 +70,7 @@ def load_env(label, headless=False):
 
     Cfg.domain_rand.lag_timesteps = 6
     Cfg.domain_rand.randomize_lag_timesteps = True
-    Cfg.control.control_type = "actuator_net"
+    Cfg.control.control_type = "P"
 
     from m2_gym.envs.wrappers.history_wrapper import HistoryWrapper
 
@@ -94,8 +94,8 @@ def play_go1(headless=True):
     import glob
     import os
 
-    label = "gait-conditioned-agility/pretrain-v0/train"
-
+    label = "gait-conditioned-agility/2025-06-04/train"
+# /home/xterra/walk-these-ways/runs/gait-conditioned-agility/2025-06-04/train/081001.170040
     env, policy = load_env(label, headless=headless)
 
     num_eval_steps = 250
