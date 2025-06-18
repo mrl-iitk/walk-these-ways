@@ -115,6 +115,7 @@ def train_go1(headless=True):
     Cfg.rewards.terminal_body_height = 0.05
     Cfg.rewards.use_terminal_roll_pitch = True
     Cfg.rewards.terminal_body_ori = 1.6
+    Cfg.rewards.use_mimoc = False
 
     Cfg.commands.resampling_time = 10
     Cfg.commands.command_curriculum = True
@@ -154,6 +155,17 @@ def train_go1(headless=True):
     Cfg.reward_scales.tracking_contacts_shaped_force = 4.0
     Cfg.reward_scales.tracking_contacts_shaped_vel = 4.0
     Cfg.reward_scales.collision = -5.0
+
+    # MIMOC reward_scales
+    Cfg.reward_scales.track_joint_pos = 1.0
+    Cfg.reward_scales.track_joint_vel = 1.0
+    Cfg.reward_scales.track_joint_torque = 1.0
+    Cfg.reward_scales.track_body_pos = 1.0
+    Cfg.reward_scales.track_body_lin_vel = 1.0
+    Cfg.reward_scales.track_body_orient = 1.0
+    Cfg.reward_scales.track_body_ang_vel = 1.0
+    Cfg.reward_scales.track_ee_pos = 1.0
+    Cfg.reward_scales.track_ee_vel = 1.0
 
     Cfg.rewards.reward_container_name = "CoRLRewards"
     Cfg.rewards.only_positive_rewards = False

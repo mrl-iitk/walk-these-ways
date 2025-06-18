@@ -56,6 +56,8 @@ class LeggedRobot(BaseTask):
         self.record_eval_now = False
         self.collecting_evaluation = False
         self.num_still_evaluating = 0
+        # to store which timestep of ref trajectory each robot is following, to use in termination condition
+        self.traj_indices = torch.zeros(self.num_envs, dtype=torch.int32, device=self.device)
 
     def step(self, actions):
         """ Apply actions, simulate, call self.post_physics_step()
@@ -101,6 +103,8 @@ class LeggedRobot(BaseTask):
 
         self.episode_length_buf += 1
         self.common_step_counter += 1
+        self.traj_indices += 1 #update ref traj index followed by each robot
+        self.traj_indices = torch.clamp(self.traj_indices, max=self.ref_traj['joint_pos'].shape[0] - 1) # ensure the index doesn't go above T-1
 
         # prepare quantities
         self.base_pos[:] = self.root_states[:self.num_envs, 0:3]
@@ -147,6 +151,9 @@ class LeggedRobot(BaseTask):
             self.body_height_buf = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1) \
                                    < self.cfg.rewards.terminal_body_height
             self.reset_buf = torch.logical_or(self.body_height_buf, self.reset_buf)
+        # If reference trajectory end is reached while the robot follows, end episode    
+        traj_end_reached = self.traj_indices >= self.ref_traj['joint_pos'].shape[0]
+        self.reset_buf |= traj_end_reached
 
     def reset_idx(self, env_ids):
         """ Reset some environments.
@@ -165,7 +172,10 @@ class LeggedRobot(BaseTask):
             self._call_train_eval(self._update_terrain_curriculum, env_ids)
 
         # reset robot states
-        self._resample_commands(env_ids)
+        if self.cfg.rewards.use_mimoc:
+            self.commands[env_ids] = self.ref_traj['commands'][random_timesteps]
+        else:    
+            self._resample_commands(env_ids)
         self._call_train_eval(self._randomize_dof_props, env_ids)
         if self.cfg.domain_rand.randomize_rigids_after_start:
             self._call_train_eval(self._randomize_rigid_body_props, env_ids)
@@ -173,6 +183,39 @@ class LeggedRobot(BaseTask):
 
         self._call_train_eval(self._reset_dofs, env_ids)
         self._call_train_eval(self._reset_root_states, env_ids)
+
+        T = self.ref_traj['joint_pos'].shape[0] # Total number of timesteps
+        # for each environment, get a random timestep from ref_traj as initial state
+        random_timesteps = torch.randint(0, T, (len(env_ids),), device=self.device)
+        self.traj_indices[env_ids] = random_timesteps # to keep track of reference timestep followed by each robot
+
+        # Set joint positions and velocities
+        self.dof_pos[env_ids] = self.ref_traj['joint_pos'][random_timesteps]
+        self.dof_vel[env_ids] = self.ref_traj['joint_vel'][random_timesteps]
+
+        # Compose root state: [pos, quat, lin_vel, ang_vel]
+        root_state = torch.cat([
+            self.ref_traj['body_pos'][random_timesteps],
+            self.ref_traj['body_orient'][random_timesteps],
+            self.ref_traj['body_lin_vel'][random_timesteps],
+            self.ref_traj['body_ang_vel'][random_timesteps]
+        ], dim=-1)
+
+        self.root_states[env_ids] = root_state.to(self.device)
+
+        # Set sim state and root_state in physics sim, refer to isaacgym/docs/programming/tensors.html
+        # for detailed method info, refer to isaacgym/docs/api/python/gym_py.html
+        env_ids_int32 = env_ids.to(dtype=torch.int32) # different Tensor reference of int32 type for gym, some Tensor Lifetime problem
+        # the self.dof_state/root_states are tensors on device which need to be
+        # converted to tensor descriptors, for which the unwrap command is needed
+        self.gym.set_dof_state_tensor_indexed(
+            self.sim, gymtorch.unwrap_tensor(self.dof_state),
+            gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32)
+        )
+        self.gym.set_actor_root_state_tensor_indexed(
+            self.sim, gymtorch.unwrap_tensor(self.root_states),
+            gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32)
+        )
 
         # reset buffers
         self.last_actions[env_ids] = 0.
@@ -294,13 +337,26 @@ class LeggedRobot(BaseTask):
                                                      gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
 
     def compute_reward(self):
-        """ Compute rewards
+        """ Compute rewards - CoRl (default)
             Calls each reward function which had a non-zero scale (processed in self._prepare_reward_function())
             adds each terms to the episode sums and to the total reward
+            Compute rewards - MIMOC
+            uses the total tracking reward function to directly give the final reward
         """
         self.rew_buf[:] = 0.
         self.rew_buf_pos[:] = 0.
         self.rew_buf_neg[:] = 0.
+
+        if self.cfg.rewards.use_mimoc:
+            for i in range(len(self.reward_functions)):
+                name = self.reward_names[i]
+                rew = self.reward_functions[i](self.traj_indices) * self.reward_scales[name]
+                self.rew_buf += rew
+                self.episode_sums[name] += rew
+                self.command_sums[name] += rew
+            self.command_sums["ep_timesteps"] += 1
+            return
+        
         for i in range(len(self.reward_functions)):
             name = self.reward_names[i]
             rew = self.reward_functions[i]() * self.reward_scales[name]
@@ -335,6 +391,17 @@ class LeggedRobot(BaseTask):
     def compute_observations(self):
         """ Computes observations
         """
+        if self.cfg.rewards.use_mimoc:
+            self.obs_buf = torch.cat((self.dof_pos, # q
+                                      self.dof_vel, # q dot
+                                      self.base_lin_vel, # x dot
+                                      self.base_pos[:,2].unsqueeze(-1), # z
+                                      self.base_ang_vel, # omega
+                                      self.commands, #c
+                                      torch.sin(self.clock_inputs),
+                                      torch.cos(self.clock_inputs)
+                                      ),dim=-1)
+            return
         self.obs_buf = torch.cat((self.projected_gravity,
                                   (self.dof_pos[:, :self.num_actuated_dof] - self.default_dof_pos[:,
                                                                              :self.num_actuated_dof]) * self.obs_scales.dof_pos,
@@ -713,10 +780,15 @@ class LeggedRobot(BaseTask):
         # teleport robots to prevent falling off the edge
         self._call_train_eval(self._teleport_robots, torch.arange(self.num_envs, device=self.device))
 
-        # resample commands
-        sample_interval = int(self.cfg.commands.resampling_time / self.dt)
-        env_ids = (self.episode_length_buf % sample_interval == 0).nonzero(as_tuple=False).flatten()
-        self._resample_commands(env_ids)
+        if self.cfg.rewards.use_MIMOC:
+            # Set current command from reference trajectory for each env
+            self.commands[:] = self.ref_traj['commands'][self.traj_indices]
+        else:
+            # resample commands
+            sample_interval = int(self.cfg.commands.resampling_time / self.dt)
+            env_ids = (self.episode_length_buf % sample_interval == 0).nonzero(as_tuple=False).flatten()
+            self._resample_commands(env_ids)
+        
         self._step_contact_targets()
 
         # measure terrain heights
@@ -978,121 +1050,6 @@ class LeggedRobot(BaseTask):
         torques = torques * self.motor_strengths
         return torch.clip(torques, -self.torque_limits, self.torque_limits)
 
-    # def _compute_torques(self, actions):
-    #     """ Compute torques from actions.
-    #         Actions can be interpreted as position or velocity targets given to a PD controller, or directly as scaled torques.
-    #         [NOTE]: torques must have the same dimension as the number of DOFs, even if some DOFs are not actuated.
-
-    #     Args:
-    #         actions (torch.Tensor): Actions
-
-    #     Returns:
-    #         [torch.Tensor]: Torques sent to the simulation
-    #     """
-    #     # pd controller
-    #     actions_scaled = actions[:, :12] * self.cfg.control.action_scale
-    #     actions_scaled[:, [0, 3, 6, 9]] *= self.cfg.control.hip_scale_reduction  # scale down hip flexion range
-
-    #     if self.cfg.domain_rand.randomize_lag_timesteps:
-    #         self.lag_buffer = self.lag_buffer[1:] + [actions_scaled.clone()]
-    #         self.joint_pos_target = self.lag_buffer[0] + self.default_dof_pos
-    #     else:
-    #         self.joint_pos_target = actions_scaled + self.default_dof_pos
-
-    #     control_type = self.cfg.control.control_type
-
-    #     pd_torques = self.p_gains * self.Kp_factors * (
-    #             self.joint_pos_target - self.dof_pos + self.motor_offsets) - self.d_gains * self.Kd_factors * self.dof_vel
-        
-    #     # Compute actuator network torques for logging
-    #     self.joint_pos_err = self.dof_pos - self.joint_pos_target + self.motor_offsets
-    #     self.joint_vel = self.dof_vel
-    #     an_torques = self.actuator_network(self.joint_pos_err, self.joint_pos_err_last, self.joint_pos_err_last_last,
-    #                                     self.joint_vel, self.joint_vel_last, self.joint_vel_last_last)
-
-    #     # Initialize CSV file with separate columns for each joint
-    #     if not hasattr(self, 'csv_file'):
-    #         import csv
-    #         from datetime import datetime
-    #         self.csv_filename = f"torque_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-    #         self.csv_file = open(self.csv_filename, 'w', newline='')
-    #         self.csv_writer = csv.writer(self.csv_file)
-    #         self.timestep = 0
-            
-    #         # Create headers for each joint
-    #         headers = ['timestep']
-    #         for i in range(12):  # Assuming 12 joints
-    #             headers.extend([
-    #                 f'joint{i+1}_pos_err',
-    #                 f'joint{i+1}_pos_err_last',
-    #                 f'joint{i+1}_pos_err_last_last',
-    #                 f'joint{i+1}_vel',
-    #                 f'joint{i+1}_vel_last',
-    #                 f'joint{i+1}_vel_last_last',
-    #                 f'joint{i+1}_an_torque',
-    #                 f'joint{i+1}_pd_torque'
-    #             ])
-    #         self.csv_writer.writerow(headers)
-
-    #     # Prepare data row with individual joint values
-    #     # data_row = [self.timestep]
-    #     # for i in range(12):  # For each joint
-    #     #     data_row.extend([
-    #     #         self.joint_pos_err[0, i].cpu().detach().item(),
-    #     #         self.joint_pos_err_last[0, i].cpu().detach().item(),
-    #     #         self.joint_pos_err_last_last[0, i].cpu().detach().item(),
-    #     #         self.joint_vel[0, i].cpu().detach().item(),
-    #     #         self.joint_vel_last[0, i].cpu().detach().item(),
-    #     #         self.joint_vel_last_last[0, i].cpu().detach().item(),
-    #     #         an_torques[0, i].cpu().detach().item(),
-    #     #         pd_torques[0, i].cpu().detach().item()
-    #     #     ])
-        
-    #     # self.csv_writer.writerow(data_row)
-    #     # self.timestep += 1
-
-    #     # Update last values for next iteration
-    #     # self.joint_pos_err_last_last = torch.clone(self.joint_pos_err_last)
-    #     # self.joint_pos_err_last = torch.clone(self.joint_pos_err)
-    #     # self.joint_vel_last_last = torch.clone(self.joint_vel_last)
-    #     # self.joint_vel_last = torch.clone(self.joint_vel)
-
-    #     abd_indices = [0, 3, 6, 9]   # joints 1,4,7,10
-    #     hip_indices = [1, 4, 7, 10]  # joints 2,5,8,11
-    #     knee_indices = [2, 5, 8, 11] # joints 3,6,9,12
-
-    #     # Return torques for actual control
-    #     an_torques = an_torques * self.motor_strengths
-    #     pd_torques = pd_torques * self.motor_strengths
-
-    #     # Prepare data row with individual joint values
-    #     data_row = [self.timestep]
-    #     for i in range(12):  # For each joint
-    #         data_row.extend([
-    #             self.joint_pos_err[0, i].cpu().detach().item(),
-    #             self.joint_pos_err_last[0, i].cpu().detach().item(),
-    #             self.joint_pos_err_last_last[0, i].cpu().detach().item(),
-    #             self.joint_vel[0, i].cpu().detach().item(),
-    #             self.joint_vel_last[0, i].cpu().detach().item(),
-    #             self.joint_vel_last_last[0, i].cpu().detach().item(),
-    #             an_torques[0, i].cpu().detach().item(),
-    #             pd_torques[0, i].cpu().detach().item()
-    #         ])
-        
-    #     self.csv_writer.writerow(data_row)
-    #     self.timestep += 1
-
-    #     # Update last values for next iteration
-    #     self.joint_pos_err_last_last = torch.clone(self.joint_pos_err_last)
-    #     self.joint_pos_err_last = torch.clone(self.joint_pos_err)
-    #     self.joint_vel_last_last = torch.clone(self.joint_vel_last)
-    #     self.joint_vel_last = torch.clone(self.joint_vel)
-
-    #     # print(self.motor_strengths)
-    #     # for ind in knee_indices:
-    #     #     an_torques[:,ind] = pd_torques[:,ind]
-    #     return torch.clip(pd_torques, -self.torque_limits, self.torque_limits)
-    
     def _reset_dofs(self, env_ids, cfg):
         """ Resets DOF position and velocities of selected environmments
         Positions are randomly selected within 0.5:1.5 x default positions.
@@ -1573,8 +1530,12 @@ class LeggedRobot(BaseTask):
         """
         # reward containers
         from m2_gym.envs.rewards.corl_rewards import CoRLRewards
-        reward_containers = {"CoRLRewards": CoRLRewards}
-        self.reward_container = reward_containers[self.cfg.rewards.reward_container_name](self)
+        from m2_gym.envs.rewards.mimoc_rewards import MIMOCRewards
+        reward_containers = {"CoRLRewards": CoRLRewards,"MIMOCRewards": MIMOCRewards}
+        if self.cfg.rewards.use_mimoc:
+            self.reward_container = MIMOCRewards(self)
+        else:
+            self.reward_container = reward_containers[self.cfg.rewards.reward_container_name](self)
 
         # remove zero scales + multiply non-zero ones by dt
         for key in list(self.reward_scales.keys()):
