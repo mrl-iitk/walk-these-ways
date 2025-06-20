@@ -9,7 +9,7 @@ from m2_gym.envs.base.legged_robot_config import Cfg
 
 class VelocityTrackingEasyEnv(LeggedRobot):
     def __init__(self, sim_device, headless, num_envs=None, prone=False, deploy=False,
-                 cfg: Cfg = None, eval_cfg: Cfg = None, initial_dynamics_dict=None, physics_engine="SIM_PHYSX"):
+                 cfg: Cfg = None, eval_cfg: Cfg = None, ref_traj = None, initial_dynamics_dict=None, physics_engine="SIM_PHYSX"):
 
         if num_envs is not None:
             cfg.env.num_envs = num_envs

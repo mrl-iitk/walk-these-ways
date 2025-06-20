@@ -6,7 +6,7 @@ from isaacgym import gymapi
 from isaacgym.torch_utils import quat_to_euler_xyz
 
 class MIMOCRewards:
-    # initialize the class with enivronment, ref_traj as input
+    # initialize the class with environment, ref_traj as input
     def __init__(self, env, ref_traj=None):
         self.env = env
         self.ref_traj = ref_traj
@@ -29,21 +29,14 @@ class MIMOCRewards:
     
     def _compute_widths(self):
         """Compute widths αβ based on equation (4) of paper: αβ = 2 / (max(βref) - min(βref))²"""
-        if self.ref_traj is None:
-            return
-        
         ref_traj = self.ref_traj
         
         # Compute widths for each state variable as key-value in dict
         for key in ref_traj.keys():
-            if key in ['joint_pos', 'joint_vel', 'joint_torque', 'body_pos', 
-                      'body_lin_vel', 'body_orient', 'body_ang_vel', 'ee_pos', 'ee_vel']:
+            if key in ['joint_position', 'joint_velocity', 'joint_torque', 'base_position', 
+                      'base_body_frame_lin_vel', 'base_rpy', 'angular_velocity', 'foot_position', 'foot_velocity']:
                 data = ref_traj[key]
-                if isinstance(data, torch.Tensor):
-                    data_range = torch.max(data) - torch.min(data)
-                else:
-                    data_range = np.max(data) - np.min(data)
-                
+                data_range = torch.max(data) - torch.min(data)
                 self.widths[key] = (2.0 / data_range) ** 2
                 
     
@@ -82,7 +75,7 @@ class MIMOCRewards:
         ref_values = self.get_current_reference(timesteps)
         return self._generic_tracking_reward(
             self.env.dof_pos,
-            ref_values['joint_pos'],
+            ref_values['joint_position'],
             self.widths.get('joint_pos', 1.0) # gives 1 by default
         )
     
@@ -91,7 +84,7 @@ class MIMOCRewards:
         ref_values = self.get_current_reference(timesteps)
         return self._generic_tracking_reward(
             self.env.dof_vel,
-            ref_values['joint_vel'],
+            ref_values['joint_velocity'],
             self.widths.get('joint_vel', 1.0)
         )
     
@@ -109,7 +102,7 @@ class MIMOCRewards:
         ref_values = self.get_current_reference(timesteps)
         return self._generic_tracking_reward(
             self.env.base_pos,
-            ref_values['body_pos'],
+            ref_values['base_position'],
             self.widths.get('body_pos', 1.0)
         )
     
@@ -118,7 +111,7 @@ class MIMOCRewards:
         ref_values = self.get_current_reference(timesteps)
         return self._generic_tracking_reward(
             self.env.base_lin_vel,
-            ref_values['body_lin_vel'],
+            ref_values['base_body_frame_lin_vel'],
             self.widths.get('body_lin_vel', 1.0)
         )
     
@@ -129,7 +122,7 @@ class MIMOCRewards:
         base_RPY = quat_to_euler_xyz(base_quat)
         return self._generic_tracking_reward(
             base_RPY,
-            ref_values['body_orient'],
+            ref_values['base_rpy'],
             self.widths.get('body_orient', 1.0)
         )
     
@@ -138,29 +131,25 @@ class MIMOCRewards:
         ref_values = self.get_current_reference(timesteps)
         return self._generic_tracking_reward(
             self.env.base_ang_vel,
-            ref_values['body_ang_vel'],
+            ref_values['angular_velocity'],
             self.widths.get('body_ang_vel', 1.0)
         )
     
     def _reward_track_ee_pos(self, timesteps=None):
         """Track reference end-effector positions (re)"""
-        ref_values = self.get_current_reference(timesteps)
-        # Feet positions are the end effector positions
-        ee_positions = self.env.foot_positions        
+        ref_values = self.get_current_reference(timesteps)   
         return self._generic_tracking_reward(
-            ee_positions,
-            ref_values['ee_pos'],
+            self.env.foot_positions,
+            ref_values['foot_position'],
             self.widths.get('ee_pos', 1.0)
         )
     
     def _reward_track_ee_vel(self, timesteps=None):
         """Track reference end-effector velocities (rė)"""
-        ref_values = self.get_current_reference(timesteps)
-        # Assuming foot_velocities represents end-effector velocities
-        ee_velocities = self.env.foot_velocities        
+        ref_values = self.get_current_reference(timesteps)       
         return self._generic_tracking_reward(
-            ee_velocities,
-            ref_values['ee_vel'],
+            self.env.foot_velocities,
+            ref_values['foot_velocity'],
             self.widths.get('ee_vel', 1.0)
         )
     

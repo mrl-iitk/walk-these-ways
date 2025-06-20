@@ -17,7 +17,7 @@ from .legged_robot_config import Cfg
 
 
 class LeggedRobot(BaseTask):
-    def __init__(self, cfg: Cfg, sim_params, physics_engine, sim_device, headless, eval_cfg=None,
+    def __init__(self, cfg: Cfg, sim_params, physics_engine, sim_device, headless, ref_traj = None, eval_cfg=None,
                  initial_dynamics_dict=None):
         """ Parses the provided config file,
             calls create_sim() (which creates, simulation, terrain and environments),
@@ -30,6 +30,7 @@ class LeggedRobot(BaseTask):
             device_type (string): 'cuda' or 'cpu'
             device_id (int): 0, 1, ...
             headless (bool): Run without rendering if True
+            ref_traj (dict): State, command, phase clock data of a reference trajectory 
         """
         self.cfg = cfg
         self.eval_cfg = eval_cfg
@@ -37,6 +38,7 @@ class LeggedRobot(BaseTask):
         self.height_samples = None
         self.debug_viz = False
         self.init_done = False
+        self.ref_traj = ref_traj
         self.initial_dynamics_dict = initial_dynamics_dict
         if eval_cfg is not None: self._parse_cfg(eval_cfg)
         self._parse_cfg(self.cfg)
@@ -84,7 +86,8 @@ class LeggedRobot(BaseTask):
 
         # return clipped obs, clipped states (None), rewards, dones and infos
         clip_obs = self.cfg.normalization.clip_observations
-        self.obs_buf = torch.clip(self.obs_buf, -clip_obs, clip_obs)
+        if not self.cfg.rewards.use_mimoc: 
+            self.obs_buf = torch.clip(self.obs_buf, -clip_obs, clip_obs)
         if self.privileged_obs_buf is not None:
             self.privileged_obs_buf = torch.clip(self.privileged_obs_buf, -clip_obs, clip_obs)
         return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
@@ -104,7 +107,7 @@ class LeggedRobot(BaseTask):
         self.episode_length_buf += 1
         self.common_step_counter += 1
         self.traj_indices += 1 #update ref traj index followed by each robot
-        self.traj_indices = torch.clamp(self.traj_indices, max=self.ref_traj['joint_pos'].shape[0] - 1) # ensure the index doesn't go above T-1
+        self.traj_indices = torch.clamp(self.traj_indices, max=self.ref_traj['joint_position'].shape[0] - 1) # ensure the index doesn't go above T-1
 
         # prepare quantities
         self.base_pos[:] = self.root_states[:self.num_envs, 0:3]
@@ -152,7 +155,7 @@ class LeggedRobot(BaseTask):
                                    < self.cfg.rewards.terminal_body_height
             self.reset_buf = torch.logical_or(self.body_height_buf, self.reset_buf)
         # If reference trajectory end is reached while the robot follows, end episode    
-        traj_end_reached = self.traj_indices >= self.ref_traj['joint_pos'].shape[0]
+        traj_end_reached = self.traj_indices >= self.ref_traj['joint_position'].shape[0]
         self.reset_buf |= traj_end_reached
 
     def reset_idx(self, env_ids):
@@ -173,7 +176,7 @@ class LeggedRobot(BaseTask):
 
         # reset robot states
         if self.cfg.rewards.use_mimoc:
-            self.commands[env_ids] = self.ref_traj['commands'][random_timesteps]
+            self.commands[env_ids][0:3] = self.ref_traj['commands'][random_timesteps]
         else:    
             self._resample_commands(env_ids)
         self._call_train_eval(self._randomize_dof_props, env_ids)
@@ -184,21 +187,21 @@ class LeggedRobot(BaseTask):
         self._call_train_eval(self._reset_dofs, env_ids)
         self._call_train_eval(self._reset_root_states, env_ids)
 
-        T = self.ref_traj['joint_pos'].shape[0] # Total number of timesteps
+        T = self.ref_traj['joint_position'].shape[0] # Total number of timesteps
         # for each environment, get a random timestep from ref_traj as initial state
         random_timesteps = torch.randint(0, T, (len(env_ids),), device=self.device)
         self.traj_indices[env_ids] = random_timesteps # to keep track of reference timestep followed by each robot
 
         # Set joint positions and velocities
-        self.dof_pos[env_ids] = self.ref_traj['joint_pos'][random_timesteps]
-        self.dof_vel[env_ids] = self.ref_traj['joint_vel'][random_timesteps]
+        self.dof_pos[env_ids] = self.ref_traj['joint_position'][random_timesteps]
+        self.dof_vel[env_ids] = self.ref_traj['joint_velocity'][random_timesteps]
 
         # Compose root state: [pos, quat, lin_vel, ang_vel]
         root_state = torch.cat([
-            self.ref_traj['body_pos'][random_timesteps],
-            self.ref_traj['body_orient'][random_timesteps],
-            self.ref_traj['body_lin_vel'][random_timesteps],
-            self.ref_traj['body_ang_vel'][random_timesteps]
+            self.ref_traj['base_position'][random_timesteps],
+            self.ref_traj['base_quat'][random_timesteps],
+            self.ref_traj['body_world_frame_lin_vel'][random_timesteps],
+            self.ref_traj['angular_velocity'][random_timesteps]
         ], dim=-1)
 
         self.root_states[env_ids] = root_state.to(self.device)
@@ -929,6 +932,9 @@ class LeggedRobot(BaseTask):
             self.command_sums[key][env_ids] = 0.
 
     def _step_contact_targets(self):
+        if self.cfg.rewards.use_mimoc:
+            clock_vals = self.ref_traj['phase_clock'][self.traj_indices]
+            self.clock_inputs = 2*np.pi*clock_vals
         if self.cfg.env.observe_gait_commands:
             frequencies = self.commands[:, 4]
             phases = self.commands[:, 5]

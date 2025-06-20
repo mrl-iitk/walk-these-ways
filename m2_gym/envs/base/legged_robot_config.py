@@ -209,10 +209,10 @@ class Cfg(PrefixProto, cli=False):
     class control(PrefixProto, cli=False):
         control_type = 'actuator_net' #'P'  # P: position, V: velocity, T: torques
         # PD Drive parameters:
-        stiffness = {'joint_a': 10.0, 'joint_b': 15.}  # [N*m/rad]
-        damping = {'joint_a': 1.0, 'joint_b': 1.5}  # [N*m*s/rad]
+        stiffness = {'joint_a': 20.0, 'joint_b': 20.}  # [N*m/rad]
+        damping = {'joint_a': 0.5, 'joint_b': 0.5}  # [N*m*s/rad]
         # action scale: target angle = actionScale * action + defaultAngle
-        action_scale = 0.5
+        action_scale = 0.25
         hip_scale_reduction = 1.0
         # decimation: Number of control action updates @ sim DT per policy DT
         decimation = 4
@@ -249,7 +249,7 @@ class Cfg(PrefixProto, cli=False):
         restitution_range = [0, 1.0]
         randomize_base_mass = False
         # add link masses, increase range, randomize inertia, randomize joint properties
-        added_mass_range = [-1., 1.]
+        added_mass_range = [-2., 2.]
         randomize_com_displacement = False
         # add link masses, increase range, randomize inertia, randomize joint properties
         com_displacement_range = [-0.15, 0.15]
@@ -330,6 +330,15 @@ class Cfg(PrefixProto, cli=False):
         base_motion = 0.
         feet_impact_vel = 0.0
         raibert_heuristic = 0.0
+        track_joint_pos = 1.0
+        track_joint_vel = 1.0
+        track_joint_torque = 1.0
+        track_body_pos = 1.0
+        track_body_lin_vel = 1.0
+        track_body_orient = 1.0
+        track_body_ang_vel = 1.0
+        track_ee_pos = 1.0
+        track_ee_vel = 1.0
 
     class normalization(PrefixProto, cli=False):
         clip_observations = 100.

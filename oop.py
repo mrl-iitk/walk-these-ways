@@ -1,6 +1,6 @@
 # Tutorial to understand Object Oriented Programming
 # Reference - https://youtu.be/JeznW_7DlB0?si=ifbWmxnWoYeZYNXr
-
+import torch
 class Cat:
     def __init__(self,name, age): # instantiation method
         self.name = name # creates an attribute
@@ -45,3 +45,6 @@ p.show()
 d.show()
 d.speak()
 f.show()
+
+reference_trajectory = torch.load("reference_trajectory.pt")
+print(reference_trajectory.keys())
